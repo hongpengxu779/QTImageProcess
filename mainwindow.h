@@ -1,0 +1,65 @@
+#ifndef MAINWINDOW_H
+#define MAINWINDOW_H
+
+#include <QMainWindow>
+#include <QObject>
+#include <QLabel>
+#include <QStatusBar>
+#include "ImageView/ProcessingWidget.h"
+#include "ImageProcessor/ImageProcessor.h"
+
+class MainWindow : public QMainWindow
+{
+    Q_OBJECT
+
+public:
+    explicit MainWindow(QWidget *parent = nullptr);
+    ~MainWindow() override;
+
+private slots:
+    void onSelectImage();
+    void onSelectFolder();
+    void onSaveImage();
+    void onShowOriginal();
+    void onFlipHorizontal();
+    void onFlipVertical();
+    void onMeanFilter();
+    void onGaussianFilter();
+    void onMedianFilter();
+    void onBrightnessChanged(int value);
+    void onGammaChanged(int value);
+    void onOffsetChanged(int value);
+    void onRChanged(int value);
+    void onGChanged(int value);
+    void onBChanged(int value);
+    void onRgbToGrayChanged(bool checked);
+    void onImageLoaded(bool success);
+    void onImageProcessed();
+    void onError(const QString &errorMessage);
+    void onMouseClicked(const QPoint &pos, int grayValue, int r, int g, int b);
+    void onImageStatsUpdated(double meanValue);
+    void updateStatusBar(const QPoint &pos, int grayValue, int r, int g, int b);
+    void updateImageStats(double meanValue);
+    void onHistogramCalculated(const QVector<int> &histogram);
+    void onHistogramEqualization();
+    void onHistogramStretching();
+    void onHistEqualClicked();
+    void onResetToOriginal();
+    void onThresholdChanged(int value);
+    void onContrastChanged(int value);
+    void onSaturationChanged(int value);
+
+private:
+    void setupUI();
+    void setupConnections();
+    void createMenuBar();
+    void setupStatusBar();
+
+    ProcessingWidget *m_processingWidget;
+    ImageProcessor *imageProcessor;
+    QLabel *m_statusLabel;
+    QLabel *m_pixelInfoLabel;
+    QLabel *m_meanValueLabel;
+};
+
+#endif // MAINWINDOW_H
