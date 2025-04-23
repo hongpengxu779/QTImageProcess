@@ -37,6 +37,7 @@ ProcessingWidget::ProcessingWidget(QWidget *parent)
     , sliderB(nullptr)
     , m_subtractFiltered(nullptr)
     , m_rgbToGray(nullptr)
+    , m_showHistogram(nullptr)
     , sliderGamma(nullptr)
     , sliderOffset(nullptr)
     , lblKValue(nullptr)
@@ -277,31 +278,52 @@ void ProcessingWidget::setupUi()
         vRight->addWidget(gbBasic);
 
         // 色彩调整组
-        gbColor = new QGroupBox(tr("色彩调整"));
+        gbColor = new QGroupBox(tr("灰度直方图调整"));
         gbColor->setMinimumHeight(200);
-        auto *fColor = new QFormLayout(gbColor);
-        fColor->setSpacing(15);
+        auto *vColor = new QVBoxLayout(gbColor);
+        vColor->setSpacing(15);
+
+        // Add histogram display checkbox
+        m_showHistogram = new QCheckBox(tr("显示灰度直方图"));
+        m_showHistogram->setChecked(false);
+        m_showHistogram->setStyleSheet("QCheckBox { font-weight: bold; }");
+        vColor->addWidget(m_showHistogram);
+
+        // Connect the checkbox state change signal
+        connect(m_showHistogram, &QCheckBox::stateChanged, [this](int state) {
+            emit showHistogramRequested(state == Qt::Checked);
+        });
+
+        // Create a form layout for the RGB sliders
+        auto *formColor = new QFormLayout();
+        formColor->setSpacing(10);
 
         sliderR = new QSlider(Qt::Horizontal);
         sliderG = new QSlider(Qt::Horizontal);
         sliderB = new QSlider(Qt::Horizontal);
 
+        // Set up R slider
         sliderR->setMinimumHeight(30);
         sliderR->setTickPosition(QSlider::TicksBelow);
         sliderR->setTickInterval(20);
 
+        // Set up G slider
         sliderG->setMinimumHeight(30);
         sliderG->setTickPosition(QSlider::TicksBelow);
         sliderG->setTickInterval(20);
 
+        // Set up B slider
         sliderB->setMinimumHeight(30);
         sliderB->setTickPosition(QSlider::TicksBelow);
         sliderB->setTickInterval(20);
 
-        fColor->addRow(tr("R值:"), sliderR);
-        fColor->addRow(tr("G值:"), sliderG);
-        fColor->addRow(tr("B值:"), sliderB);
+        // Add sliders to form layout
+        formColor->addRow(tr("R值:"), sliderR);
+        formColor->addRow(tr("G值:"), sliderG);
+        formColor->addRow(tr("B值:"), sliderB);
 
+        // Add form layout to color group
+        vColor->addLayout(formColor);
         vRight->addWidget(gbColor);
         vRight->addStretch(1);
 

@@ -2,6 +2,108 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QDebug>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QFormLayout>
+#include <QPushButton>
+#include <QSlider>
+#include <QLabel>
+#include <QCheckBox>
+#include <QGroupBox>
+
+ProcessingWidget::ProcessingWidget(QWidget *parent)
+    : QWidget(parent)
+    , m_zoomFactor(1.0)
+    , ZOOM_FACTOR_STEP(0.1)
+    , MAX_ZOOM(5.0)
+    , MIN_ZOOM(0.1)
+{
+    setupUi();
+}
+
+void ProcessingWidget::setupUi()
+{
+    auto *hMain = new QHBoxLayout(this);
+    hMain->setContentsMargins(10,10,10,10);
+    hMain->setSpacing(15);
+
+    // Left layout setup
+    QWidget *leftW = new QWidget;
+    auto *vLeft = new QVBoxLayout(leftW);
+    vLeft->setSpacing(12);
+    leftW->setMinimumWidth(200);
+
+    // Create the basic UI components (buttons, etc.)
+    // ... existing code ...
+
+    // Right layout
+    QWidget *rightW = new QWidget;
+    auto *vRight = new QVBoxLayout(rightW);
+    vRight->setSpacing(20);
+    rightW->setMinimumWidth(250);
+
+    // Basic adjustment group
+    gbBasic = new QGroupBox(tr("基础调整"));
+    // ... existing code for basic adjustment ...
+
+    vRight->addWidget(gbBasic);
+
+    // Color adjustment group
+    gbColor = new QGroupBox(tr("灰度直方图调整"));
+    gbColor->setMinimumHeight(200);
+    auto *vColor = new QVBoxLayout(gbColor);
+    vColor->setSpacing(15);
+
+    // Add histogram display checkbox
+    m_showHistogram = new QCheckBox(tr("显示灰度直方图"));
+    m_showHistogram->setChecked(false);
+    m_showHistogram->setStyleSheet("QCheckBox { font-weight: bold; }");
+    vColor->addWidget(m_showHistogram);
+
+    // Connect the checkbox state change signal
+    connect(m_showHistogram, &QCheckBox::stateChanged, [this](int state) {
+        emit showHistogramRequested(state == Qt::Checked);
+    });
+
+    // Add RGB sliders
+    auto *formColor = new QFormLayout();
+    formColor->setSpacing(10);
+
+    sliderR = new QSlider(Qt::Horizontal);
+    sliderG = new QSlider(Qt::Horizontal);
+    sliderB = new QSlider(Qt::Horizontal);
+
+    sliderR->setMinimumHeight(30);
+    sliderR->setTickPosition(QSlider::TicksBelow);
+    sliderR->setTickInterval(20);
+
+    sliderG->setMinimumHeight(30);
+    sliderG->setTickPosition(QSlider::TicksBelow);
+    sliderG->setTickInterval(20);
+
+    sliderB->setMinimumHeight(30);
+    sliderB->setTickPosition(QSlider::TicksBelow);
+    sliderB->setTickInterval(20);
+
+    formColor->addRow(tr("R值:"), sliderR);
+    formColor->addRow(tr("G值:"), sliderG);
+    formColor->addRow(tr("B值:"), sliderB);
+    
+    vColor->addLayout(formColor);
+    vRight->addWidget(gbColor);
+    vRight->addStretch(1);
+
+    // Setup main layout
+    hMain->addWidget(leftW);
+    hMain->addWidget(imageLabel, 1);
+    hMain->addWidget(rightW);
+
+    // Connect signals
+    // ... existing signal connections ...
+    
+    // Update image stats
+    updateImageStats();
+}
 
 void ProcessingWidget::mouseMoveEvent(QMouseEvent *event)
 {

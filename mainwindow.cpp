@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "ImageView/ProcessingWidget.h"
+#include "HistogramDialog.h"
 #include <QMenuBar>
 #include <QFileDialog>
 #include <QMessageBox>
@@ -9,6 +10,7 @@
 #include <QStatusBar>
 #include <QDebug>
 #include <QTimer>
+#include <QSignalBlocker>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -17,6 +19,7 @@ MainWindow::MainWindow(QWidget *parent)
     , m_statusLabel(nullptr)
     , m_pixelInfoLabel(nullptr)
     , m_meanValueLabel(nullptr)
+    , m_histogramDialog(nullptr)
 {
     try {
         qDebug() << "Initializing MainWindow...";
@@ -33,6 +36,13 @@ MainWindow::MainWindow(QWidget *parent)
             throw std::runtime_error("Failed to create ImageProcessor");
         }
         qDebug() << "ImageProcessor created";
+
+        // Create histogram dialog (not shown by default)
+        m_histogramDialog = new HistogramDialog(this);
+        if (!m_histogramDialog) {
+            throw std::runtime_error("Failed to create HistogramDialog");
+        }
+        qDebug() << "HistogramDialog created";
 
         m_statusLabel = new QLabel(this);
         m_pixelInfoLabel = new QLabel(this);
@@ -69,6 +79,7 @@ MainWindow::~MainWindow()
     delete m_statusLabel;
     delete m_pixelInfoLabel;
     delete m_meanValueLabel;
+    delete m_histogramDialog;
 }
 
 void MainWindow::setupUI()
@@ -137,6 +148,12 @@ void MainWindow::setupConnections()
     connect(m_processingWidget, &ProcessingWidget::mouseClicked, this, &MainWindow::onMouseClicked);
     connect(m_processingWidget, &ProcessingWidget::mouseMoved, this, &MainWindow::onMouseMoved);
     connect(m_processingWidget, &ProcessingWidget::imageStatsUpdated, this, &MainWindow::onImageStatsUpdated);
+
+    // 连接直方图复选框信号
+    if (m_processingWidget->getShowHistogramCheckbox()) {
+        connect(m_processingWidget->getShowHistogramCheckbox(), &QCheckBox::stateChanged, 
+                this, [this](int state) { onShowHistogramChanged(state == Qt::Checked); });
+    }
 }
 
 void MainWindow::createMenuBar()
@@ -202,6 +219,9 @@ void MainWindow::onResetToOriginal()
 void MainWindow::onImageProcessed()
 {
     m_processingWidget->displayImage(imageProcessor->getProcessedImage());
+    
+    // 更新直方图
+    updateHistogramDialog();
 }
 
 void MainWindow::onError(const QString &errorMessage)
@@ -312,6 +332,9 @@ void MainWindow::onBrightnessChanged(int value)
         imageProcessor->applyLinearTransform(value, offsetValue);
         m_processingWidget->displayImage(imageProcessor->getProcessedImage());
     }
+    
+    // 如果直方图对话框已打开，则更新直方图
+    updateHistogramDialog();
 }
 
 void MainWindow::onRChanged(int value)
@@ -395,6 +418,9 @@ void MainWindow::onGammaChanged(int value)
         imageProcessor->adjustGammaContrast(gamma, offset);
         m_processingWidget->displayImage(imageProcessor->getProcessedImage());
     }
+    
+    // 如果直方图对话框已打开，则更新直方图
+    updateHistogramDialog();
 }
 
 void MainWindow::onOffsetChanged(int value)
@@ -423,40 +449,70 @@ void MainWindow::onOffsetChanged(int value)
         imageProcessor->applyLinearTransform(brightnessValue, value);
         m_processingWidget->displayImage(imageProcessor->getProcessedImage());
     }
+    
+    // 如果直方图对话框已打开，则更新直方图
+    updateHistogramDialog();
 }
 
 void MainWindow::onRgbToGrayChanged(bool checked)
 {
-    if (checked) {
-        // 先恢复原图
-        imageProcessor->resetToOriginal();
+    try {
+        if (!imageProcessor) {
+            qDebug() << "错误: imageProcessor 为空";
+            return;
+        }
+
+        // 检查是否有图像加载
+        if (imageProcessor->getOriginalImage().isNull()) {
+            qDebug() << "错误: 没有加载图像";
+            QMessageBox::warning(this, tr("警告"), tr("请先加载图像再执行此操作"));
+            
+            // 如果没有图像，取消选中复选框
+            if (m_processingWidget && m_processingWidget->getRgbToGrayCheckBox()) {
+                QSignalBlocker blocker(m_processingWidget->getRgbToGrayCheckBox()); // 阻止信号循环
+                m_processingWidget->getRgbToGrayCheckBox()->setChecked(false);
+            }
+            return;
+        }
         
-        // 转为灰度图并保存灰度图状态
-        imageProcessor->convertToGrayscale();
-        imageProcessor->saveGrayscaleImage();
+        qDebug() << "RGB 转灰度状态改变: " << (checked ? "选中" : "取消选中");
         
-        // 显示纯灰度图，不应用任何变换
-        m_processingWidget->displayImage(imageProcessor->getProcessedImage());
-        
-        // 重置所有滑块到初始值，这样不会自动触发变换
-        m_processingWidget->getBrightnessSlider()->blockSignals(true);
-        m_processingWidget->getOffsetSlider()->blockSignals(true);
-        m_processingWidget->getGammaSlider()->blockSignals(true);
-        
-        m_processingWidget->getBrightnessSlider()->setValue(0);
-        m_processingWidget->getOffsetSlider()->setValue(0);
-        m_processingWidget->getGammaSlider()->setValue(10); // Gamma=1.0
-        
-        m_processingWidget->getBrightnessSlider()->blockSignals(false);
-        m_processingWidget->getOffsetSlider()->blockSignals(false);
-        m_processingWidget->getGammaSlider()->blockSignals(false);
-        
-        // 重置值标签显示
-        m_processingWidget->resetValueLabels();
-    } else {
-        // 恢复原图
-        imageProcessor->resetToOriginal();
-        m_processingWidget->displayImage(imageProcessor->getProcessedImage());
+        // 使用 try-catch 分别处理两种转换方式
+        try {
+            if (checked) {
+                // 转换为灰度图
+                qDebug() << "转换图像为灰度...";
+                imageProcessor->convertToGrayscale();
+                qDebug() << "保存灰度图像状态...";
+                imageProcessor->saveGrayscaleImage();
+            } else {
+                // 恢复到原始图像
+                qDebug() << "恢复到原始图像...";
+                imageProcessor->resetToOriginal();
+            }
+            
+            // 显示处理后的图像
+            qDebug() << "更新显示...";
+            m_processingWidget->displayImage(imageProcessor->getProcessedImage());
+            
+            // 更新直方图
+            qDebug() << "更新直方图...";
+            updateHistogramDialog();
+            
+            qDebug() << "RGB 转灰度操作完成";
+        } catch (const std::exception& e) {
+            qDebug() << "在图像转换过程中出错:" << e.what();
+            QMessageBox::warning(this, tr("错误"), tr("图像处理失败: %1").arg(e.what()));
+            
+            // 在失败时恢复复选框状态
+            if (m_processingWidget && m_processingWidget->getRgbToGrayCheckBox()) {
+                QSignalBlocker blocker(m_processingWidget->getRgbToGrayCheckBox()); // 阻止信号循环
+                m_processingWidget->getRgbToGrayCheckBox()->setChecked(!checked);
+            }
+        }
+    } catch (const std::exception& e) {
+        qDebug() << "onRgbToGrayChanged 发生异常:" << e.what();
+        QMessageBox::critical(this, tr("严重错误"), tr("处理过程中发生未知错误: %1").arg(e.what()));
     }
 }
 
@@ -544,6 +600,75 @@ void MainWindow::onMouseMoved(const QPoint &pos, int grayValue)
             .arg(pixelColor.green())
             .arg(pixelColor.blue());
         m_pixelInfoLabel->setText(info);
+    }
+}
+
+void MainWindow::onShowHistogramChanged(bool show)
+{
+    try {
+        if (show) {
+            if (!m_histogramDialog) {
+                m_histogramDialog = new HistogramDialog(this);
+            }
+            
+            // 先更新直方图数据，再显示对话框
+            if (imageProcessor && !imageProcessor->getProcessedImage().isNull()) {
+                // 使用当前处理后的图像
+                QImage currentImage = imageProcessor->getProcessedImage();
+                
+                // 如果RGB转灰度被勾选，则先转换成灰度图
+                if (m_processingWidget && m_processingWidget->getRgbToGrayCheckBox() && 
+                    m_processingWidget->getRgbToGrayCheckBox()->isChecked()) {
+                    // 确保使用灰度图像版本
+                    QImage grayImage = currentImage.convertToFormat(QImage::Format_Grayscale8);
+                    m_histogramDialog->updateHistogram(grayImage);
+                    qDebug() << "显示灰度直方图：使用灰度图像版本";
+                } else {
+                    // 使用原始图像
+                    m_histogramDialog->updateHistogram(currentImage);
+                    qDebug() << "显示灰度直方图：使用原始图像";
+                }
+            } else {
+                qDebug() << "无法更新直方图：图像为空";
+            }
+            
+            // 显示对话框
+            m_histogramDialog->show();
+            m_histogramDialog->raise(); // 确保窗口在前台显示
+            m_histogramDialog->activateWindow();
+        } else if (m_histogramDialog) {
+            m_histogramDialog->hide();
+        }
+    } catch (const std::exception& e) {
+        qDebug() << "显示直方图对话框时出错:" << e.what();
+    }
+}
+
+void MainWindow::updateHistogramDialog()
+{
+    try {
+        if (m_histogramDialog && m_histogramDialog->isVisible() && imageProcessor) {
+            QImage currentImage = imageProcessor->getProcessedImage();
+            
+            if (!currentImage.isNull()) {
+                // 使用灰度图像版本还是原图取决于RGB转灰度是否被勾选
+                if (m_processingWidget && m_processingWidget->getRgbToGrayCheckBox() && 
+                    m_processingWidget->getRgbToGrayCheckBox()->isChecked()) {
+                    // 转换为灰度图像
+                    QImage grayImage = currentImage.convertToFormat(QImage::Format_Grayscale8);
+                    m_histogramDialog->updateHistogram(grayImage);
+                    qDebug() << "更新直方图：使用灰度图像";
+                } else {
+                    // 使用当前图像
+                    m_histogramDialog->updateHistogram(currentImage);
+                    qDebug() << "更新直方图：使用原始图像";
+                }
+            } else {
+                qDebug() << "无法更新直方图：当前图像为空";
+            }
+        }
+    } catch (const std::exception& e) {
+        qDebug() << "更新直方图对话框时出错:" << e.what();
     }
 }
 

@@ -281,22 +281,70 @@ void ImageProcessor::adjustGammaContrast(double gamma, int offset)
 
 void ImageProcessor::convertToGrayscale()
 {
-    if (processedImage.isNull()) {
-        emit error(tr("没有可处理的图像"));
-        return;
+    try {
+        if (processedImage.isNull()) {
+            qDebug() << "转换失败: 当前图像为空";
+            emit error(tr("没有可处理的图像"));
+            return;
+        }
+
+        qDebug() << "开始转换为灰度图，图像大小: " << processedImage.width() << "x" << processedImage.height();
+
+        // 如果已经是灰度图像，不需要再转换
+        if (processedImage.format() == QImage::Format_Grayscale8) {
+            qDebug() << "图像已经是灰度格式，无需转换";
+            emit imageProcessed();
+            return;
+        }
+
+        cv::Mat mat = QImageToMat(processedImage);
+        if (mat.empty()) {
+            qDebug() << "转换为灰度图失败: 无法将图像转换为 Mat 格式";
+            emit error(tr("图像格式转换失败"));
+            return;
+        }
+
+        cv::Mat gray;
+        // 检查通道数，只有彩色图像需要转换
+        if (mat.channels() == 3 || mat.channels() == 4) {
+            qDebug() << "将 " << mat.channels() << " 通道图像转换为灰度";
+            cv::cvtColor(mat, gray, cv::COLOR_BGR2GRAY);
+        } else if (mat.channels() == 1) {
+            // 已经是单通道图像，直接拷贝
+            gray = mat.clone();
+            qDebug() << "图像已经是单通道，直接拷贝";
+        } else {
+            qDebug() << "不支持的通道数: " << mat.channels();
+            emit error(tr("不支持的图像格式，通道数: %1").arg(mat.channels()));
+            return;
+        }
+
+        if (gray.empty()) {
+            qDebug() << "转换为灰度图失败: 处理后的 Mat 为空";
+            emit error(tr("灰度图像处理失败"));
+            return;
+        }
+
+        QImage grayImage = MatToQImage(gray);
+        if (grayImage.isNull()) {
+            qDebug() << "转换为灰度图失败: MatToQImage 返回空图像";
+            emit error(tr("灰度图像转换失败"));
+            return;
+        }
+
+        processedImage = grayImage;
+        qDebug() << "转换为灰度图成功";
+        emit imageProcessed();
+    } catch (const cv::Exception& e) {
+        qDebug() << "OpenCV 错误 (convertToGrayscale): " << e.what();
+        emit error(tr("OpenCV 处理错误: %1").arg(e.what()));
+    } catch (const std::exception& e) {
+        qDebug() << "转换为灰度图异常: " << e.what();
+        emit error(tr("灰度转换错误: %1").arg(e.what()));
+    } catch (...) {
+        qDebug() << "转换为灰度图时发生未知异常";
+        emit error(tr("灰度转换发生未知错误"));
     }
-
-    cv::Mat mat = QImageToMat(processedImage);
-    cv::Mat gray;
-
-    if (mat.channels() == 3) {
-        cv::cvtColor(mat, gray, cv::COLOR_BGR2GRAY);
-    } else {
-        gray = mat;
-    }
-
-    processedImage = MatToQImage(gray);
-    emit imageProcessed();
 }
 
 void ImageProcessor::applyHistogramEqualization()
@@ -511,62 +559,109 @@ void ImageProcessor::applyLinearTransform(int kValue, int bValue)
 // 保存当前灰度图像状态
 void ImageProcessor::saveGrayscaleImage()
 {
-    // 如果当前图像是灰度图，将其保存到grayscaleImage
-    if (isGrayscale()) {
-        grayscaleImage = processedImage;
-    } else {
-        // 如果不是灰度图，先转换为灰度图再保存
-        cv::Mat mat = QImageToMat(processedImage);
-        cv::Mat gray;
-        cv::cvtColor(mat, gray, cv::COLOR_BGR2GRAY);
-        grayscaleImage = MatToQImage(gray);
+    try {
+        // 检查当前图像是否有效
+        if (processedImage.isNull()) {
+            qDebug() << "保存灰度图像失败：当前图像为空";
+            return;
+        }
+
+        // 如果当前图像是灰度图，将其保存到grayscaleImage
+        if (isGrayscale()) {
+            grayscaleImage = processedImage.copy(); // 使用深拷贝确保数据独立
+            qDebug() << "已保存当前灰度图像";
+        } else {
+            // 如果不是灰度图，先转换为灰度图再保存
+            try {
+                cv::Mat mat = QImageToMat(processedImage);
+                if (!mat.empty()) {
+                    cv::Mat gray;
+                    cv::cvtColor(mat, gray, cv::COLOR_BGR2GRAY);
+                    grayscaleImage = MatToQImage(gray);
+                    qDebug() << "已将彩色图像转换为灰度图像并保存";
+                } else {
+                    qDebug() << "转换为Mat失败，无法保存灰度图像";
+                }
+            } catch (const std::exception& e) {
+                qDebug() << "保存灰度图像时出错:" << e.what();
+            }
+        }
+    } catch (const std::exception& e) {
+        qDebug() << "saveGrayscaleImage异常:" << e.what();
     }
 }
 
 // 判断当前图像是否为灰度图
 bool ImageProcessor::isGrayscale() const
 {
-    // 如果图像是空的，返回false
-    if (processedImage.isNull()) {
-        return false;
-    }
-    
-    // 检查图像格式
-    if (processedImage.format() == QImage::Format_Grayscale8) {
-        return true;
-    }
-    
-    // 对于其他格式，检查RGB值是否相等
-    // 取样一些点（不检查所有像素以提高效率）
-    int width = processedImage.width();
-    int height = processedImage.height();
-    int step = qMax(1, qMin(width, height) / 10); // 采样步长
-    
-    for (int y = 0; y < height; y += step) {
-        for (int x = 0; x < width; x += step) {
-            QRgb pixel = processedImage.pixel(x, y);
-            int r = qRed(pixel);
-            int g = qGreen(pixel);
-            int b = qBlue(pixel);
-            
-            // 如果RGB值不相等，则不是灰度图
-            if (r != g || g != b) {
-                return false;
+    try {
+        // 如果图像是空的，返回false
+        if (processedImage.isNull() || processedImage.width() == 0 || processedImage.height() == 0) {
+            return false;
+        }
+        
+        // 检查图像格式
+        if (processedImage.format() == QImage::Format_Grayscale8) {
+            return true;
+        }
+        
+        // 对于其他格式，检查RGB值是否相等
+        // 取样一些点（不检查所有像素以提高效率）
+        int width = processedImage.width();
+        int height = processedImage.height();
+        int step = qMax(1, qMin(width, height) / 10); // 采样步长
+        
+        for (int y = 0; y < height; y += step) {
+            for (int x = 0; x < width; x += step) {
+                if (x < width && y < height) { // 额外检查坐标范围
+                    QRgb pixel = processedImage.pixel(x, y);
+                    int r = qRed(pixel);
+                    int g = qGreen(pixel);
+                    int b = qBlue(pixel);
+                    
+                    // 如果RGB值不相等，则不是灰度图
+                    if (r != g || g != b) {
+                        return false;
+                    }
+                }
             }
         }
+        
+        return true;
+    } catch (const std::exception& e) {
+        qDebug() << "isGrayscale异常:" << e.what();
+        return false;
     }
-    
-    return true;
 }
 
 // 恢复到灰度图像状态
 void ImageProcessor::restoreGrayscaleImage()
 {
-    if (!grayscaleImage.isNull()) {
-        processedImage = grayscaleImage;
-        emit imageProcessed();
-    } else {
-        // 如果没有保存的灰度图像，从原图转换
-        convertToGrayscale();
+    try {
+        if (!grayscaleImage.isNull()) {
+            // 使用深拷贝确保数据独立
+            processedImage = grayscaleImage.copy();
+            emit imageProcessed();
+            qDebug() << "已恢复到保存的灰度图像";
+        } else {
+            // 如果没有保存的灰度图像，从原图转换（避免重复调用自身）
+            qDebug() << "没有保存的灰度图像，从原始图像转换";
+            if (!originalImage.isNull()) {
+                // 直接从原始图像转换为灰度，避免调用convertToGrayscale()
+                cv::Mat mat = QImageToMat(originalImage);
+                if (!mat.empty()) {
+                    cv::Mat gray;
+                    cv::cvtColor(mat, gray, cv::COLOR_BGR2GRAY);
+                    processedImage = MatToQImage(gray);
+                    emit imageProcessed();
+                } else {
+                    qDebug() << "原始图像转换为Mat失败";
+                }
+            } else {
+                qDebug() << "原始图像为空，无法转换为灰度";
+            }
+        }
+    } catch (const std::exception& e) {
+        qDebug() << "restoreGrayscaleImage异常:" << e.what();
     }
 }

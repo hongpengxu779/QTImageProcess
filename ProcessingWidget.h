@@ -40,9 +40,11 @@ public:
     QSlider* getBSlider() const { return sliderB; }
     
     QCheckBox* getSubtractFilteredCheckbox() const { return m_subtractFiltered; }
-    QCheckBox* getRgbToGrayCheckbox() const { return m_rgbToGray; }
+    QCheckBox* getRgbToGrayCheckBox() const { return m_rgbToGray; }
+    QCheckBox* getShowHistogramCheckbox() const { return m_showHistogram; }
     
     bool getSubtractFiltered() const { return m_subtractFiltered ? m_subtractFiltered->isChecked() : false; }
+    bool getShowHistogram() const { return m_showHistogram ? m_showHistogram->isChecked() : false; }
     
     // Image display function
     void displayImage(const QImage &image);
@@ -53,6 +55,7 @@ signals:
     void imageProcessed(const QImage& image);
     void mouseMoved(const QPoint& pos, int grayValue);
     void imageStatsUpdated(double meanValue);
+    void showHistogramRequested(bool show); // Signal to show histogram dialog
 
 protected:
     void mouseMoveEvent(QMouseEvent *event) override;
@@ -90,6 +93,7 @@ private:
     QSlider *sliderB;
     QCheckBox *m_subtractFiltered;
     QCheckBox *m_rgbToGray;
+    QCheckBox *m_showHistogram; // Checkbox for showing the histogram
     
     // Image handling
     QImage currentImage;

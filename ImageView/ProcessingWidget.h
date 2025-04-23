@@ -47,9 +47,11 @@ public:
     QSlider* getGSlider() const { return sliderG; }
     QSlider* getBSlider() const { return sliderB; }
     QCheckBox* getRgbToGrayCheckBox() const { return m_rgbToGray; }
+    QCheckBox* getShowHistogramCheckbox() const { return m_showHistogram; }
 
     // 获取复选框状态
     bool getSubtractFiltered() const { return m_subtractFiltered ? m_subtractFiltered->isChecked() : false; }
+    bool getShowHistogram() const { return m_showHistogram ? m_showHistogram->isChecked() : false; }
 
     // 显示图片
     void displayImage(const QImage &image);
@@ -61,6 +63,7 @@ signals:
     void mouseClicked(const QPoint& pos, int grayValue, int r, int g, int b);
     void mouseMoved(const QPoint& pos, int grayValue);
     void imageStatsUpdated(double meanValue);
+    void showHistogramRequested(bool show); // Signal to show histogram dialog
 
 protected:
     void mousePressEvent(QMouseEvent *event) override;
@@ -98,6 +101,7 @@ private:
     QPushButton *btnHistEqual;
     QCheckBox *m_subtractFiltered;  // 控制是否从原始图像中减去滤波结果
     QCheckBox *m_rgbToGray;        // RGB转灰度复选框
+    QCheckBox *m_showHistogram;    // 显示灰度直方图复选框
 
     // 中间
     QTabWidget    *tabWidget;

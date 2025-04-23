@@ -13,6 +13,7 @@ LIBS += -LE:/C++/QIImageProcess/3rdparty/opencv/lib -lopencv_world490
 #DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
 
 SOURCES += \
+    HistogramDialog.cpp \
     ImageProcessor/ImageProcessor.cpp \
     ImageView/ProcessingWidget.cpp \
     ImageView/ImageProcessorThread.cpp \
@@ -20,6 +21,7 @@ SOURCES += \
     mainwindow.cpp
 
 HEADERS += \
+    HistogramDialog.h \
     ImageProcessor/ImageProcessor.h \
     ImageView/ProcessingWidget.h \
     ImageView/ImageProcessorThread.h \

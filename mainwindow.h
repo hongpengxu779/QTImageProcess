@@ -7,6 +7,7 @@
 #include <QStatusBar>
 #include "ImageView/ProcessingWidget.h"
 #include "ImageProcessor/ImageProcessor.h"
+#include "HistogramDialog.h"
 
 class MainWindow : public QMainWindow
 {
@@ -47,6 +48,7 @@ private slots:
     void onHistogramStretching();
     void onHistEqualClicked();
     void onResetToOriginal();
+    void onShowHistogramChanged(bool show);
 
 private:
     void setupUI();
@@ -54,12 +56,14 @@ private:
     void createMenuBar();
     void setupStatusBar();
     void applyCurrentTransformations();    // 应用当前所有变换
+    void updateHistogramDialog();          // Update histogram dialog with current image
 
     ProcessingWidget *m_processingWidget;
     ImageProcessor *imageProcessor;
     QLabel *m_statusLabel;
     QLabel *m_pixelInfoLabel;
     QLabel *m_meanValueLabel;
+    HistogramDialog *m_histogramDialog;    // Histogram dialog
 };
 
 #endif // MAINWINDOW_H
