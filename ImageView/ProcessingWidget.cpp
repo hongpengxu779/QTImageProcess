@@ -32,9 +32,6 @@ ProcessingWidget::ProcessingWidget(QWidget *parent)
     , gbBasic(nullptr)
     , sliderBrightness(nullptr)
     , gbColor(nullptr)
-    , sliderR(nullptr)
-    , sliderG(nullptr)
-    , sliderB(nullptr)
     , m_subtractFiltered(nullptr)
     , m_rgbToGray(nullptr)
     , m_showHistogram(nullptr)
@@ -279,7 +276,7 @@ void ProcessingWidget::setupUi()
 
         // 色彩调整组
         gbColor = new QGroupBox(tr("灰度直方图调整"));
-        gbColor->setMinimumHeight(200);
+        gbColor->setMinimumHeight(150);
         auto *vColor = new QVBoxLayout(gbColor);
         vColor->setSpacing(15);
 
@@ -294,36 +291,16 @@ void ProcessingWidget::setupUi()
             emit showHistogramRequested(state == Qt::Checked);
         });
 
-        // Create a form layout for the RGB sliders
-        auto *formColor = new QFormLayout();
-        formColor->setSpacing(10);
+        // 添加一些说明文字
+        QLabel *histogramInfoLabel = new QLabel(tr("注意：显示直方图将会打开一个新窗口，显示当前图像的灰度分布情况。"));
+        histogramInfoLabel->setWordWrap(true);
+        histogramInfoLabel->setStyleSheet("QLabel { color: #666; }");
+        vColor->addWidget(histogramInfoLabel);
 
-        sliderR = new QSlider(Qt::Horizontal);
-        sliderG = new QSlider(Qt::Horizontal);
-        sliderB = new QSlider(Qt::Horizontal);
+        // 添加弹性空间
+        vColor->addStretch();
 
-        // Set up R slider
-        sliderR->setMinimumHeight(30);
-        sliderR->setTickPosition(QSlider::TicksBelow);
-        sliderR->setTickInterval(20);
-
-        // Set up G slider
-        sliderG->setMinimumHeight(30);
-        sliderG->setTickPosition(QSlider::TicksBelow);
-        sliderG->setTickInterval(20);
-
-        // Set up B slider
-        sliderB->setMinimumHeight(30);
-        sliderB->setTickPosition(QSlider::TicksBelow);
-        sliderB->setTickInterval(20);
-
-        // Add sliders to form layout
-        formColor->addRow(tr("R值:"), sliderR);
-        formColor->addRow(tr("G值:"), sliderG);
-        formColor->addRow(tr("B值:"), sliderB);
-
-        // Add form layout to color group
-        vColor->addLayout(formColor);
+        // 将组添加到右侧布局
         vRight->addWidget(gbColor);
         vRight->addStretch(1);
 

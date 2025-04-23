@@ -43,9 +43,7 @@ public:
     QSlider* getBrightnessSlider() const { return sliderBrightness; }
     QSlider* getGammaSlider() const { return sliderGamma; }
     QSlider* getOffsetSlider() const { return sliderOffset; }
-    QSlider* getRSlider() const { return sliderR; }
-    QSlider* getGSlider() const { return sliderG; }
-    QSlider* getBSlider() const { return sliderB; }
+    
     QCheckBox* getRgbToGrayCheckBox() const { return m_rgbToGray; }
     QCheckBox* getShowHistogramCheckbox() const { return m_showHistogram; }
 
@@ -112,9 +110,6 @@ private:
     QGroupBox *gbBasic;
     QSlider   *sliderBrightness;
     QGroupBox *gbColor;
-    QSlider   *sliderR;
-    QSlider   *sliderG;
-    QSlider   *sliderB;
     QSlider   *sliderGamma;
     QSlider   *sliderOffset;
     QLabel    *lblKValue;         // 显示k值的标签
