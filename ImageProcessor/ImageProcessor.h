@@ -27,10 +27,16 @@ public:
 
     // 新增图像处理函数
     void adjustBrightness(int value);  // 亮度调整 y = kx + b
+    void applyLinearTransform(int kValue, int bValue);  // 线性变换 y = kx + b
     void adjustGammaContrast(double gamma, int offset);  // Gamma对比度调整
     void convertToGrayscale();  // RGB转灰度
     void applyHistogramEqualization();  // 直方图均衡化
     void applyHistogramStretching();  // 直方图拉伸
+    
+    // 灰度图像处理相关函数
+    void saveGrayscaleImage();  // 保存当前灰度图像状态
+    bool isGrayscale() const;   // 判断当前图像是否为灰度图
+    void restoreGrayscaleImage();  // 恢复到灰度图像状态
 
 private:
     // QImage 和 cv::Mat 转换函数
@@ -45,6 +51,7 @@ signals:
 private:
     QImage originalImage;
     QImage processedImage;
+    QImage grayscaleImage;
 };
 
 #endif // IMAGEPROCESSOR_H

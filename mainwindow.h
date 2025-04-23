@@ -33,10 +33,12 @@ private slots:
     void onGChanged(int value);
     void onBChanged(int value);
     void onRgbToGrayChanged(bool checked);
+    void onConvertToGrayscale();
     void onImageLoaded(bool success);
     void onImageProcessed();
     void onError(const QString &errorMessage);
     void onMouseClicked(const QPoint &pos, int grayValue, int r, int g, int b);
+    void onMouseMoved(const QPoint &pos, int grayValue);
     void onImageStatsUpdated(double meanValue);
     void updateStatusBar(const QPoint &pos, int grayValue, int r, int g, int b);
     void updateImageStats(double meanValue);
@@ -45,15 +47,13 @@ private slots:
     void onHistogramStretching();
     void onHistEqualClicked();
     void onResetToOriginal();
-    void onThresholdChanged(int value);
-    void onContrastChanged(int value);
-    void onSaturationChanged(int value);
 
 private:
     void setupUI();
     void setupConnections();
     void createMenuBar();
     void setupStatusBar();
+    void applyCurrentTransformations();    // 应用当前所有变换
 
     ProcessingWidget *m_processingWidget;
     ImageProcessor *imageProcessor;

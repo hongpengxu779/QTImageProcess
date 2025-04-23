@@ -6,7 +6,8 @@
 #include <QPixmap>
 #include <QCheckBox>
 #include "../ImageProcessor/ImageProcessor.h"
-#include "ImageProcessorThread.h"
+// 注释掉不存在的头文件
+// #include "ImageProcessorThread.h"
 
 class QPushButton;
 class QSlider;
@@ -40,37 +41,43 @@ public:
 
     // 获取滑块接口
     QSlider* getBrightnessSlider() const { return sliderBrightness; }
-    QSlider* getThresholdSlider() const { return sliderThreshold; }
-    QSlider* getContrastSlider() const { return sliderContrast; }
-    QSlider* getSaturationSlider() const { return sliderSaturation; }
+    QSlider* getGammaSlider() const { return sliderGamma; }
+    QSlider* getOffsetSlider() const { return sliderOffset; }
     QSlider* getRSlider() const { return sliderR; }
     QSlider* getGSlider() const { return sliderG; }
     QSlider* getBSlider() const { return sliderB; }
-    QSlider* getGammaSlider() const { return sliderGamma; }
-    QSlider* getOffsetSlider() const { return sliderOffset; }
     QCheckBox* getRgbToGrayCheckBox() const { return m_rgbToGray; }
 
     // 获取复选框状态
-    bool getSubtractFiltered() const { return m_subtractFiltered->isChecked(); }
+    bool getSubtractFiltered() const { return m_subtractFiltered ? m_subtractFiltered->isChecked() : false; }
 
     // 显示图片
     void displayImage(const QImage &image);
+    
+    // 重置标签显示
+    void resetValueLabels();
 
 signals:
     void mouseClicked(const QPoint& pos, int grayValue, int r, int g, int b);
+    void mouseMoved(const QPoint& pos, int grayValue);
     void imageStatsUpdated(double meanValue);
 
 protected:
     void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
 
 private slots:
     void onImageProcessed(const QImage &processedImage);
     void onImageStatsUpdated(double meanValue);
+    void updateKValueLabel(int value);
+    void updateBValueLabel(int value);
+    void updateGammaValueLabel(int value);
 
 private:
     void setupUi();
     void updateImageStats();
+    double calculateMeanValue(const QImage &image);  // 新添加的方法声明
 
     // 缩放相关
     double m_zoomFactor = 1.0;
@@ -100,20 +107,21 @@ private:
     // 右侧
     QGroupBox *gbBasic;
     QSlider   *sliderBrightness;
-    QSlider   *sliderThreshold;
-    QSlider   *sliderContrast;
-    QSlider   *sliderSaturation;
     QGroupBox *gbColor;
     QSlider   *sliderR;
     QSlider   *sliderG;
     QSlider   *sliderB;
     QSlider   *sliderGamma;
     QSlider   *sliderOffset;
+    QLabel    *lblKValue;         // 显示k值的标签
+    QLabel    *lblBValue;         // 显示b值的标签
+    QLabel    *lblGammaValue;     // 显示gamma值的标签
 
     // 图片相关
     ImageProcessor *imageProcessor;
     QImage m_currentImage;
-    ImageProcessorThread *m_processorThread;
+    // 移除不存在的类型
+    // ImageProcessorThread *m_processorThread;
 };
 
 #endif // PROCESSINGWIDGET_H

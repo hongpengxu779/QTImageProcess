@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <vector>
 #include <opencv2/opencv.hpp>
+#include <QDebug>
+
 ImageProcessor::ImageProcessor(QObject *parent)
     : QObject(parent)
 {
@@ -87,17 +89,86 @@ void ImageProcessor::applyMeanFilter(int kernelSize, bool subtractFromOriginal)
         return;
     }
 
-    cv::Mat mat = QImageToMat(processedImage);
-    cv::Mat originalMat = QImageToMat(originalImage);
-    cv::Mat filteredMat;
-    cv::blur(mat, filteredMat, cv::Size(kernelSize, kernelSize));
-
-    if (subtractFromOriginal) {
-        cv::subtract(originalMat, filteredMat, filteredMat);
+    if (kernelSize < 3 || kernelSize > 31) {
+        emit error(tr("核大小必须在3到31之间"));
+        return;
     }
 
-    processedImage = MatToQImage(filteredMat);
-    emit imageProcessed();
+    try {
+        qDebug() << "Converting QImage to Mat...";
+        cv::Mat mat = QImageToMat(processedImage);
+        if (mat.empty()) {
+            emit error(tr("图像转换失败"));
+            return;
+        }
+        qDebug() << "Mat size:" << mat.rows << "x" << mat.cols << "channels:" << mat.channels();
+
+        // 检查图像尺寸是否合理
+        if (mat.rows <= 0 || mat.cols <= 0) {
+            emit error(tr("图像尺寸无效"));
+            return;
+        }
+
+        // 检查图像通道数
+        if (mat.channels() != 3) {
+            emit error(tr("图像必须是3通道RGB图像"));
+            return;
+        }
+
+        cv::Mat filteredMat;
+        qDebug() << "Applying mean filter with kernel size:" << kernelSize;
+        cv::blur(mat, filteredMat, cv::Size(kernelSize, kernelSize));
+
+        if (subtractFromOriginal) {
+            qDebug() << "Converting original image to Mat...";
+            cv::Mat originalMat = QImageToMat(originalImage);
+            if (originalMat.empty()) {
+                emit error(tr("原始图像转换失败"));
+                return;
+            }
+
+            // 检查原始图像尺寸是否匹配
+            if (originalMat.rows != mat.rows || originalMat.cols != mat.cols) {
+                emit error(tr("原始图像尺寸不匹配"));
+                return;
+            }
+
+            // 检查原始图像通道数
+            if (originalMat.channels() != 3) {
+                emit error(tr("原始图像必须是3通道RGB图像"));
+                return;
+            }
+
+            qDebug() << "Subtracting filtered image from original...";
+            cv::subtract(originalMat, filteredMat, filteredMat);
+        }
+
+        qDebug() << "Converting Mat back to QImage...";
+        QImage newImage = MatToQImage(filteredMat);
+        if (newImage.isNull()) {
+            emit error(tr("结果图像转换失败"));
+            return;
+        }
+        qDebug() << "New image size:" << newImage.width() << "x" << newImage.height();
+
+        // 检查结果图像是否有效
+        if (newImage.width() <= 0 || newImage.height() <= 0) {
+            emit error(tr("结果图像尺寸无效"));
+            return;
+        }
+
+        processedImage = newImage;
+        emit imageProcessed();
+    } catch (const cv::Exception& e) {
+        qDebug() << "OpenCV error:" << e.what();
+        emit error(tr("OpenCV错误: %1").arg(e.what()));
+    } catch (const std::exception& e) {
+        qDebug() << "General error:" << e.what();
+        emit error(tr("处理错误: %1").arg(e.what()));
+    } catch (...) {
+        qDebug() << "Unknown error occurred";
+        emit error(tr("未知错误"));
+    }
 }
 
 void ImageProcessor::applyGaussianFilter(int kernelSize, double sigma, bool subtractFromOriginal)
@@ -161,9 +232,17 @@ void ImageProcessor::adjustBrightness(int value)
     cv::Mat result;
 
     // 线性变换 y = kx + b
-    // value范围是-100到100，转换为k和b
-    double k = 1.0 + value / 100.0;  // k范围是0到2
-    double b = value;  // b范围是-100到100
+    // value范围是-100到100，转换为k
+    double k = 1.0;  // 默认系数为1.0
+    
+    // 根据value调整k值
+    if (value >= 0) {
+        k = 1.0 + value / 100.0;  // k范围是1.0到2.0
+    } else {
+        k = 1.0 + value / 100.0;  // k范围是0.0到1.0
+    }
+
+    double b = 0.0;  // b将从外部传入
 
     mat.convertTo(result, -1, k, b);
     processedImage = MatToQImage(result);
@@ -315,24 +394,55 @@ void ImageProcessor::applyHistogramStretching()
 // QImage 转 cv::Mat
 cv::Mat ImageProcessor::QImageToMat(const QImage &image)
 {
+    if (image.isNull()) {
+        qDebug() << "QImage is null";
+        return cv::Mat();
+    }
+
     cv::Mat mat;
-    switch (image.format()) {
-        case QImage::Format_RGB32:
-        case QImage::Format_ARGB32:
-        case QImage::Format_ARGB32_Premultiplied:
-            mat = cv::Mat(image.height(), image.width(), CV_8UC4, (void*)image.constBits(), image.bytesPerLine());
-            cv::cvtColor(mat, mat, cv::COLOR_BGRA2BGR);
-            break;
-        case QImage::Format_RGB888:
-            mat = cv::Mat(image.height(), image.width(), CV_8UC3, (void*)image.constBits(), image.bytesPerLine());
-            cv::cvtColor(mat, mat, cv::COLOR_RGB2BGR);
-            break;
-        case QImage::Format_Grayscale8:
-            mat = cv::Mat(image.height(), image.width(), CV_8UC1, (void*)image.constBits(), image.bytesPerLine());
-            break;
-        default:
-            mat = cv::Mat(image.height(), image.width(), CV_8UC4, (void*)image.constBits(), image.bytesPerLine());
-            cv::cvtColor(mat, mat, cv::COLOR_BGRA2BGR);
+    try {
+        switch (image.format()) {
+            case QImage::Format_RGB32:
+            case QImage::Format_ARGB32:
+            case QImage::Format_ARGB32_Premultiplied: {
+                // 创建深拷贝以避免内存问题
+                QImage copy = image.copy();
+                mat = cv::Mat(copy.height(), copy.width(), CV_8UC4, copy.bits(), copy.bytesPerLine());
+                cv::cvtColor(mat, mat, cv::COLOR_BGRA2BGR);
+                break;
+            }
+            case QImage::Format_RGB888: {
+                // 创建深拷贝以避免内存问题
+                QImage copy = image.copy();
+                mat = cv::Mat(copy.height(), copy.width(), CV_8UC3, copy.bits(), copy.bytesPerLine());
+                cv::cvtColor(mat, mat, cv::COLOR_RGB2BGR);
+                break;
+            }
+            case QImage::Format_Grayscale8: {
+                // 创建深拷贝以避免内存问题
+                QImage copy = image.copy();
+                mat = cv::Mat(copy.height(), copy.width(), CV_8UC1, copy.bits(), copy.bytesPerLine());
+                break;
+            }
+            default: {
+                // 转换为RGB32格式并创建深拷贝
+                QImage converted = image.convertToFormat(QImage::Format_RGB32);
+                QImage copy = converted.copy();
+                mat = cv::Mat(copy.height(), copy.width(), CV_8UC4, copy.bits(), copy.bytesPerLine());
+                cv::cvtColor(mat, mat, cv::COLOR_BGRA2BGR);
+                break;
+            }
+        }
+    } catch (const cv::Exception& e) {
+        qDebug() << "OpenCV error in QImageToMat:" << e.what();
+        return cv::Mat();
+    } catch (const std::exception& e) {
+        qDebug() << "Error in QImageToMat:" << e.what();
+        return cv::Mat();
+    }
+
+    if (mat.empty()) {
+        qDebug() << "Failed to convert QImage to Mat";
     }
     return mat;
 }
@@ -340,12 +450,123 @@ cv::Mat ImageProcessor::QImageToMat(const QImage &image)
 // cv::Mat 转 QImage
 QImage ImageProcessor::MatToQImage(const cv::Mat &mat)
 {
-    if (mat.type() == CV_8UC3) {
-        cv::Mat rgb;
-        cv::cvtColor(mat, rgb, cv::COLOR_BGR2RGB);
-        return QImage(rgb.data, rgb.cols, rgb.rows, rgb.step, QImage::Format_RGB888).copy();
-    } else if (mat.type() == CV_8UC1) {
-        return QImage(mat.data, mat.cols, mat.rows, mat.step, QImage::Format_Grayscale8).copy();
+    if (mat.empty()) {
+        qDebug() << "Mat is empty";
+        return QImage();
     }
-    return QImage();
+
+    try {
+        if (mat.type() == CV_8UC3) {
+            cv::Mat rgb;
+            cv::cvtColor(mat, rgb, cv::COLOR_BGR2RGB);
+            // 创建深拷贝以确保数据安全
+            cv::Mat rgbCopy = rgb.clone();
+            QImage result(rgbCopy.data, rgbCopy.cols, rgbCopy.rows, rgbCopy.step, QImage::Format_RGB888);
+            return result.copy();
+        } else if (mat.type() == CV_8UC1) {
+            // 创建深拷贝以确保数据安全
+            cv::Mat grayCopy = mat.clone();
+            QImage result(grayCopy.data, grayCopy.cols, grayCopy.rows, grayCopy.step, QImage::Format_Grayscale8);
+            return result.copy();
+        } else {
+            qDebug() << "Unsupported Mat type:" << mat.type();
+            return QImage();
+        }
+    } catch (const cv::Exception& e) {
+        qDebug() << "OpenCV error in MatToQImage:" << e.what();
+        return QImage();
+    } catch (const std::exception& e) {
+        qDebug() << "Error in MatToQImage:" << e.what();
+        return QImage();
+    }
+}
+
+// 添加新方法：应用线性变换 y = kx + b
+void ImageProcessor::applyLinearTransform(int kValue, int bValue)
+{
+    if (processedImage.isNull()) {
+        emit error(tr("没有可处理的图像"));
+        return;
+    }
+
+    cv::Mat mat = QImageToMat(processedImage);
+    cv::Mat result;
+
+    // 计算k值
+    double k = 1.0;
+    if (kValue >= 0) {
+        k = 1.0 + kValue / 100.0;  // k范围是1.0到2.0
+    } else {
+        k = 1.0 + kValue / 100.0;  // k范围是0.0到1.0
+    }
+
+    // b值直接使用
+    double b = bValue;
+
+    mat.convertTo(result, -1, k, b);
+    processedImage = MatToQImage(result);
+    emit imageProcessed();
+}
+
+// 保存当前灰度图像状态
+void ImageProcessor::saveGrayscaleImage()
+{
+    // 如果当前图像是灰度图，将其保存到grayscaleImage
+    if (isGrayscale()) {
+        grayscaleImage = processedImage;
+    } else {
+        // 如果不是灰度图，先转换为灰度图再保存
+        cv::Mat mat = QImageToMat(processedImage);
+        cv::Mat gray;
+        cv::cvtColor(mat, gray, cv::COLOR_BGR2GRAY);
+        grayscaleImage = MatToQImage(gray);
+    }
+}
+
+// 判断当前图像是否为灰度图
+bool ImageProcessor::isGrayscale() const
+{
+    // 如果图像是空的，返回false
+    if (processedImage.isNull()) {
+        return false;
+    }
+    
+    // 检查图像格式
+    if (processedImage.format() == QImage::Format_Grayscale8) {
+        return true;
+    }
+    
+    // 对于其他格式，检查RGB值是否相等
+    // 取样一些点（不检查所有像素以提高效率）
+    int width = processedImage.width();
+    int height = processedImage.height();
+    int step = qMax(1, qMin(width, height) / 10); // 采样步长
+    
+    for (int y = 0; y < height; y += step) {
+        for (int x = 0; x < width; x += step) {
+            QRgb pixel = processedImage.pixel(x, y);
+            int r = qRed(pixel);
+            int g = qGreen(pixel);
+            int b = qBlue(pixel);
+            
+            // 如果RGB值不相等，则不是灰度图
+            if (r != g || g != b) {
+                return false;
+            }
+        }
+    }
+    
+    return true;
+}
+
+// 恢复到灰度图像状态
+void ImageProcessor::restoreGrayscaleImage()
+{
+    if (!grayscaleImage.isNull()) {
+        processedImage = grayscaleImage;
+        emit imageProcessed();
+    } else {
+        // 如果没有保存的灰度图像，从原图转换
+        convertToGrayscale();
+    }
 }
