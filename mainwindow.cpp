@@ -114,6 +114,7 @@ void MainWindow::setupConnections()
         connect(m_processingWidget->getFlipVButton(), &QPushButton::clicked, this, &MainWindow::onFlipVertical);
     }
     if (m_processingWidget->getMeanFilterButton()) {
+        qDebug() << "获取到均值滤波按钮的响应信号";
         connect(m_processingWidget->getMeanFilterButton(), &QPushButton::clicked, this, &MainWindow::onMeanFilter);
     }
     if (m_processingWidget->getGaussianFilterButton()) {
@@ -137,6 +138,13 @@ void MainWindow::setupConnections()
     }
     if (m_processingWidget->getOffsetSlider()) {
         connect(m_processingWidget->getOffsetSlider(), &QSlider::valueChanged, this, &MainWindow::onOffsetChanged);
+    }
+    
+    // 连接卷积核大小变化信号
+    if (m_processingWidget->getKernelSizeSpinBox()) {
+        // 将ProcessingWidget的kernelSizeChanged信号连接到ImageProcessor的setKernelSize
+        connect(m_processingWidget, &ProcessingWidget::kernelSizeChanged, 
+                imageProcessor, &ImageProcessor::setKernelSize);
     }
 
     // 连接图像处理信号
@@ -257,8 +265,18 @@ void MainWindow::onMeanFilter()
             return;
         }
         
+        qDebug() << "\n====== MEAN FILTER DEBUG START ======";
+        qDebug() << "Before Mean Filter:";
+        imageProcessor->debugImageInfo();
+        
         bool subtractFiltered = m_processingWidget ? m_processingWidget->getSubtractFiltered() : false;
-        imageProcessor->applyMeanFilter(3, subtractFiltered);  // 使用3x3的均值滤波
+        int kernelSize = m_processingWidget ? m_processingWidget->getKernelSize() : 3;
+        qDebug() << "Applying Mean Filter with kernel size " << kernelSize << ", subtractFiltered =" << subtractFiltered;
+        imageProcessor->applyMeanFilter(kernelSize, subtractFiltered);
+        
+        qDebug() << "After Mean Filter:";
+        imageProcessor->debugImageInfo();
+        qDebug() << "====== MEAN FILTER DEBUG END ======\n";
     } catch (const std::exception& e) {
         qDebug() << "Error in onMeanFilter:" << e.what();
         QMessageBox::warning(this, tr("错误"), tr("均值滤波处理时出错：%1").arg(e.what()));
@@ -276,8 +294,18 @@ void MainWindow::onGaussianFilter()
             return;
         }
         
+        qDebug() << "\n====== GAUSSIAN FILTER DEBUG START ======";
+        qDebug() << "Before Gaussian Filter:";
+        imageProcessor->debugImageInfo();
+        
         bool subtractFiltered = m_processingWidget ? m_processingWidget->getSubtractFiltered() : false;
-        imageProcessor->applyGaussianFilter(3, 1.0, subtractFiltered);  // 使用3x3的高斯滤波，sigma=1.0
+        int kernelSize = m_processingWidget ? m_processingWidget->getKernelSize() : 3;
+        qDebug() << "Applying Gaussian Filter with kernel size " << kernelSize << ", sigma=1.0, subtractFiltered =" << subtractFiltered;
+        imageProcessor->applyGaussianFilter(kernelSize, 1.0, subtractFiltered);
+        
+        qDebug() << "After Gaussian Filter:";
+        imageProcessor->debugImageInfo();
+        qDebug() << "====== GAUSSIAN FILTER DEBUG END ======\n";
     } catch (const std::exception& e) {
         qDebug() << "Error in onGaussianFilter:" << e.what();
         QMessageBox::warning(this, tr("错误"), tr("高斯滤波处理时出错：%1").arg(e.what()));
@@ -295,8 +323,18 @@ void MainWindow::onMedianFilter()
             return;
         }
         
+        qDebug() << "\n====== MEDIAN FILTER DEBUG START ======";
+        qDebug() << "Before Median Filter:";
+        imageProcessor->debugImageInfo();
+        
         bool subtractFiltered = m_processingWidget ? m_processingWidget->getSubtractFiltered() : false;
-        imageProcessor->applyMedianFilter(3, subtractFiltered);  // 使用3x3的中值滤波
+        int kernelSize = m_processingWidget ? m_processingWidget->getKernelSize() : 3;
+        qDebug() << "Applying Median Filter with kernel size " << kernelSize << ", subtractFiltered =" << subtractFiltered;
+        imageProcessor->applyMedianFilter(kernelSize, subtractFiltered);
+        
+        qDebug() << "After Median Filter:";
+        imageProcessor->debugImageInfo();
+        qDebug() << "====== MEDIAN FILTER DEBUG END ======\n";
     } catch (const std::exception& e) {
         qDebug() << "Error in onMedianFilter:" << e.what();
         QMessageBox::warning(this, tr("错误"), tr("中值滤波处理时出错：%1").arg(e.what()));
@@ -374,7 +412,7 @@ void MainWindow::onImageStatsUpdated(double meanValue)
 
 void MainWindow::updateStatusBar(const QPoint &pos, int grayValue, int r, int g, int b)
 {
-    QString info = QString("Position: (%1, %2) | Gray: %3 | RGB: (%4, %5, %6)")
+    QString info = QString("Image Position: (%1, %2) | Gray: %3 | RGB: (%4, %5, %6)")
         .arg(pos.x())
         .arg(pos.y())
         .arg(grayValue)
@@ -551,8 +589,31 @@ void MainWindow::onHistogramStretching()
 
 void MainWindow::onConvertToGrayscale()
 {
-    imageProcessor->convertToGrayscale();
-    m_processingWidget->displayImage(imageProcessor->getProcessedImage());
+    try {
+        if (!imageProcessor) {
+            qDebug() << "Error: imageProcessor is null";
+            return;
+        }
+        
+        qDebug() << "\n====== GRAYSCALE CONVERSION DEBUG START ======";
+        qDebug() << "Before Grayscale Conversion:";
+        imageProcessor->debugImageInfo();
+        
+        qDebug() << "Converting to Grayscale...";
+        imageProcessor->convertToGrayscale();
+        
+        qDebug() << "After Grayscale Conversion:";
+        imageProcessor->debugImageInfo();
+        qDebug() << "====== GRAYSCALE CONVERSION DEBUG END ======\n";
+        
+        m_processingWidget->displayImage(imageProcessor->getProcessedImage());
+    } catch (const std::exception& e) {
+        qDebug() << "Error in onConvertToGrayscale:" << e.what();
+        QMessageBox::warning(this, tr("错误"), tr("灰度转换时出错：%1").arg(e.what()));
+    } catch (...) {
+        qDebug() << "Unknown error in onConvertToGrayscale";
+        QMessageBox::warning(this, tr("错误"), tr("灰度转换时出现未知错误"));
+    }
 }
 
 // 应用所有当前的变换（在勾选RGB转灰度时使用）
@@ -592,7 +653,7 @@ void MainWindow::onMouseMoved(const QPoint &pos, int grayValue)
             pixelColor = QColor(grayValue, grayValue, grayValue);
         }
         
-        QString info = QString("Position: (%1, %2) | Gray: %3 | RGB: (%4, %5, %6)")
+        QString info = QString("Image Position: (%1, %2) | Gray: %3 | RGB: (%4, %5, %6)")
             .arg(pos.x())
             .arg(pos.y())
             .arg(grayValue)

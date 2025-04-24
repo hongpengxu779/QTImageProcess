@@ -5,6 +5,7 @@
 #include <QImage>
 #include <QPixmap>
 #include <QCheckBox>
+#include <QSpinBox>
 #include "../ImageProcessor/ImageProcessor.h"
 // 注释掉不存在的头文件
 // #include "ImageProcessorThread.h"
@@ -20,6 +21,7 @@ class QFormLayout;
 class QHBoxLayout;
 class QVBoxLayout;
 class QFrame;
+class QSpinBox;
 
 class ProcessingWidget : public QWidget {
     Q_OBJECT
@@ -46,10 +48,12 @@ public:
     
     QCheckBox* getRgbToGrayCheckBox() const { return m_rgbToGray; }
     QCheckBox* getShowHistogramCheckbox() const { return m_showHistogram; }
+    QSpinBox* getKernelSizeSpinBox() const { return spinKernelSize; }
 
     // 获取复选框状态
     bool getSubtractFiltered() const { return m_subtractFiltered ? m_subtractFiltered->isChecked() : false; }
     bool getShowHistogram() const { return m_showHistogram ? m_showHistogram->isChecked() : false; }
+    int getKernelSize() const { return spinKernelSize ? spinKernelSize->value() : 3; }
 
     // 显示图片
     void displayImage(const QImage &image);
@@ -62,6 +66,7 @@ signals:
     void mouseMoved(const QPoint& pos, int grayValue);
     void imageStatsUpdated(double meanValue);
     void showHistogramRequested(bool show); // Signal to show histogram dialog
+    void kernelSizeChanged(int size); // Signal for kernel size change
 
 protected:
     void mousePressEvent(QMouseEvent *event) override;
@@ -100,6 +105,7 @@ private:
     QCheckBox *m_subtractFiltered;  // 控制是否从原始图像中减去滤波结果
     QCheckBox *m_rgbToGray;        // RGB转灰度复选框
     QCheckBox *m_showHistogram;    // 显示灰度直方图复选框
+    QSpinBox *spinKernelSize;      // 卷积核大小控制
 
     // 中间
     QTabWidget    *tabWidget;

@@ -13,6 +13,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QDebug>
+#include <QSpinBox>
 
 ProcessingWidget::ProcessingWidget(QWidget *parent)
     : QWidget(parent)
@@ -44,6 +45,7 @@ ProcessingWidget::ProcessingWidget(QWidget *parent)
     , ZOOM_FACTOR_STEP(0.1)
     , MAX_ZOOM(2.0)
     , MIN_ZOOM(0.5)
+    , spinKernelSize(nullptr)
 {
     try {
         qDebug() << "Initializing ProcessingWidget...";
@@ -132,14 +134,45 @@ void ProcessingWidget::setupUi()
         btnGaussianFilter->setFixedSize(buttonSize);
         btnMedianFilter->setFixedSize(buttonSize);
 
-        vFilter->addWidget(btnMeanFilter);
-        vFilter->addWidget(btnGaussianFilter);
-        vFilter->addWidget(btnMedianFilter);
+        // 创建卷积核大小控制
+        auto *kernelLayout = new QHBoxLayout();
+        QLabel *kernelLabel = new QLabel(tr("卷积核大小:"));
+        spinKernelSize = new QSpinBox();
+        spinKernelSize->setMinimum(3);
+        spinKernelSize->setMaximum(31);
+        spinKernelSize->setSingleStep(2);
+        spinKernelSize->setValue(3);
+        spinKernelSize->setToolTip(tr("设置滤波的卷积核大小 (3-31, 仅奇数)"));
+        
+        // 确保只能设置奇数值
+        connect(spinKernelSize, QOverload<int>::of(&QSpinBox::valueChanged), 
+                [this](int value) {
+                    // 如果是偶数，调整到最近的奇数
+                    if (value % 2 == 0) {
+                        if (value > spinKernelSize->value())
+                            spinKernelSize->setValue(value + 1);
+                        else
+                            spinKernelSize->setValue(value - 1);
+                    } else {
+                        emit kernelSizeChanged(value);
+                    }
+                });
+        
+        kernelLayout->addWidget(kernelLabel);
+        kernelLayout->addWidget(spinKernelSize);
+
+        vFilter->addLayout(kernelLayout);
 
         // 添加复选框
         m_subtractFiltered = new QCheckBox(tr("从原图中减去"));
         m_subtractFiltered->setChecked(false);
         vFilter->addWidget(m_subtractFiltered);
+
+        vFilter->addWidget(btnMeanFilter);
+        vFilter->addWidget(btnGaussianFilter);
+        vFilter->addWidget(btnMedianFilter);
+
+        vFilter->addWidget(btnHistEqual);
 
         vFilter->addStretch();
 
