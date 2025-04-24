@@ -11,6 +11,13 @@
 #include <QDebug>
 #include <QTimer>
 #include <QSignalBlocker>
+#include <QPainter>
+#include <QPainterPath>
+#include <cmath>   // For fabs() function 
+#include <QColor>  // For QColor
+#include <algorithm> // For qMax, qMin
+#include <QToolButton> // For QToolButton
+#include <QAbstractButton> // For QAbstractButton
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -80,6 +87,125 @@ MainWindow::~MainWindow()
     delete m_pixelInfoLabel;
     delete m_meanValueLabel;
     delete m_histogramDialog;
+}
+
+// 计算矩形ROI的统计信息
+void MainWindow::calculateROIStats(const QImage& image, const QRect& roi, double& mean, double& variance)
+{
+    // Initialize return values
+    mean = 0.0;
+    variance = 0.0;
+    
+    // Input validation
+    if (image.isNull() || roi.isEmpty()) {
+        qDebug() << "Invalid image or ROI in calculateROIStats";
+        return;
+    }
+    
+    // Ensure ROI is within image bounds
+    QRect validRect = roi.intersected(image.rect());
+    if (validRect.isEmpty()) {
+        qDebug() << "ROI outside image bounds in calculateROIStats";
+        return;
+    }
+    
+    // Calculate sum and pixel count
+    double sum = 0.0;
+    int pixelCount = 0;
+    
+    for (int y = validRect.top(); y <= validRect.bottom(); ++y) {
+        for (int x = validRect.left(); x <= validRect.right(); ++x) {
+            QColor pixelColor = image.pixelColor(x, y);
+            int grayValue = qGray(pixelColor.red(), pixelColor.green(), pixelColor.blue());
+            sum += grayValue;
+            pixelCount++;
+        }
+    }
+    
+    // Calculate mean
+    if (pixelCount > 0) {
+        mean = sum / pixelCount;
+        
+        // Calculate variance
+        double sumSquaredDiff = 0.0;
+        for (int y = validRect.top(); y <= validRect.bottom(); ++y) {
+            for (int x = validRect.left(); x <= validRect.right(); ++x) {
+                QColor pixelColor = image.pixelColor(x, y);
+                int grayValue = qGray(pixelColor.red(), pixelColor.green(), pixelColor.blue());
+                double diff = grayValue - mean;
+                sumSquaredDiff += diff * diff;
+            }
+        }
+        
+        variance = sumSquaredDiff / pixelCount;
+    }
+}
+
+// 计算圆形ROI的统计信息
+void MainWindow::calculateCircleROIStats(const QImage& image, const QPoint& center, int radius, double& mean, double& variance)
+{
+    // Initialize return values
+    mean = 0.0;
+    variance = 0.0;
+    
+    // Input validation
+    if (image.isNull() || radius <= 0) {
+        qDebug() << "Invalid image or radius in calculateCircleROIStats";
+        return;
+    }
+    
+    // Calculate sum and pixel count
+    double sum = 0.0;
+    int pixelCount = 0;
+    
+    // Circle bounding box
+    int left = qMax(0, center.x() - radius);
+    int top = qMax(0, center.y() - radius);
+    int right = qMin(image.width() - 1, center.x() + radius);
+    int bottom = qMin(image.height() - 1, center.y() + radius);
+    
+    // Loop through each pixel in the bounding box
+    for (int y = top; y <= bottom; ++y) {
+        for (int x = left; x <= right; ++x) {
+            // Check if the point is inside the circle
+            int dx = x - center.x();
+            int dy = y - center.y();
+            int distanceSquared = dx*dx + dy*dy;
+            
+            if (distanceSquared <= radius*radius) {
+                // Point is inside the circle
+                QColor pixelColor = image.pixelColor(x, y);
+                int grayValue = qGray(pixelColor.red(), pixelColor.green(), pixelColor.blue());
+                sum += grayValue;
+                pixelCount++;
+            }
+        }
+    }
+    
+    // Calculate mean
+    if (pixelCount > 0) {
+        mean = sum / pixelCount;
+        
+        // Calculate variance
+        double sumSquaredDiff = 0.0;
+        for (int y = top; y <= bottom; ++y) {
+            for (int x = left; x <= right; ++x) {
+                // Check again if the point is inside the circle
+                int dx = x - center.x();
+                int dy = y - center.y();
+                int distanceSquared = dx*dx + dy*dy;
+                
+                if (distanceSquared <= radius*radius) {
+                    QColor pixelColor = image.pixelColor(x, y);
+                    int grayValue = qGray(pixelColor.red(), pixelColor.green(), pixelColor.blue());
+                    double diff = grayValue - mean;
+                    sumSquaredDiff += diff * diff;
+                }
+            }
+        }
+        
+        variance = sumSquaredDiff / pixelCount;
+    }
 }
 
 void MainWindow::setupUI()
@@ -161,6 +287,25 @@ void MainWindow::setupConnections()
     if (m_processingWidget->getShowHistogramCheckbox()) {
         connect(m_processingWidget->getShowHistogramCheckbox(), &QCheckBox::stateChanged, 
                 this, [this](int state) { onShowHistogramChanged(state == Qt::Checked); });
+    }
+    
+    // 连接ROI选择信号
+    connect(m_processingWidget, QOverload<const QRect&>::of(&ProcessingWidget::roiSelected), 
+            this, &MainWindow::onRectangleROISelected);
+    connect(m_processingWidget, QOverload<const QPoint&, int>::of(&ProcessingWidget::roiSelected), 
+            this, &MainWindow::onCircleROISelected);
+    connect(m_processingWidget, QOverload<const QPolygon&>::of(&ProcessingWidget::roiSelected), 
+            this, &MainWindow::onArbitraryROISelected);
+    
+    // 连接应用ROI按钮和矩形ROI按钮
+    if (m_processingWidget->getApplyROIButton()) {
+        connect(m_processingWidget->getApplyROIButton(), &QPushButton::clicked, 
+                this, &MainWindow::onApplyROI);
+    }
+    
+    if (m_processingWidget->getRectangleROIButton()) {
+        connect(m_processingWidget->getRectangleROIButton(), &QAbstractButton::clicked, 
+                this, &MainWindow::onRectangleROIButtonClicked);
     }
 }
 
@@ -412,6 +557,8 @@ void MainWindow::onImageStatsUpdated(double meanValue)
 
 void MainWindow::updateStatusBar(const QPoint &pos, int grayValue, int r, int g, int b)
 {
+    // pos参数已经是图像中的像素坐标（由ProcessingWidget的mousePressEvent传递）
+    // 不需要再次转换，直接显示
     QString info = QString("Image Position: (%1, %2) | Gray: %3 | RGB: (%4, %5, %6)")
         .arg(pos.x())
         .arg(pos.y())
@@ -645,23 +792,14 @@ void MainWindow::applyCurrentTransformations()
 
 void MainWindow::onMouseMoved(const QPoint &pos, int grayValue)
 {
-    if (m_pixelInfoLabel) {
-        QColor pixelColor;
-        if (!imageProcessor->getProcessedImage().isNull()) {
-            pixelColor = imageProcessor->getProcessedImage().pixelColor(pos);
-        } else {
-            pixelColor = QColor(grayValue, grayValue, grayValue);
-        }
-        
-        QString info = QString("Image Position: (%1, %2) | Gray: %3 | RGB: (%4, %5, %6)")
-            .arg(pos.x())
-            .arg(pos.y())
-            .arg(grayValue)
-            .arg(pixelColor.red())
-            .arg(pixelColor.green())
-            .arg(pixelColor.blue());
-        m_pixelInfoLabel->setText(info);
-    }
+    // 注意：这里的pos已经是图像坐标而非界面坐标
+    // 显示鼠标所在位置的像素值
+    QString info = QString("Image Position: (%1, %2) | Gray: %3")
+        .arg(pos.x())
+        .arg(pos.y())
+        .arg(grayValue);
+    
+    m_pixelInfoLabel->setText(info);
 }
 
 void MainWindow::onShowHistogramChanged(bool show)
@@ -731,6 +869,203 @@ void MainWindow::updateHistogramDialog()
     } catch (const std::exception& e) {
         qDebug() << "更新直方图对话框时出错:" << e.what();
     }
+}
+
+// ROI选择相关槽函数实现
+void MainWindow::onRectangleROISelected(const QRect& rect)
+{
+    // 更新状态栏信息 - 显示图像上的实际像素坐标
+    m_statusLabel->setText(tr("已选择矩形ROI"));
+    QString info = QString("矩形ROI (像素坐标): 左上(%1, %2), 宽高(%3 × %4)")
+        .arg(rect.x())
+        .arg(rect.y())
+        .arg(rect.width())
+        .arg(rect.height());
+    m_pixelInfoLabel->setText(info);
+    
+    // 后续可以添加实际的ROI处理逻辑，如截取子图像
+    // QImage roiImage = imageProcessor->getProcessedImage().copy(rect);
+}
+
+void MainWindow::onCircleROISelected(const QPoint& center, int radius)
+{
+    // 更新状态栏信息
+    m_statusLabel->setText(tr("已选择圆形ROI"));
+    QString info = QString("圆形ROI: 中心(%1, %2), 半径 %3")
+        .arg(center.x())
+        .arg(center.y())
+        .arg(radius);
+    m_pixelInfoLabel->setText(info);
+    
+    // 后续可以添加实际的ROI处理逻辑
+}
+
+void MainWindow::onArbitraryROISelected(const QPolygon& polygon)
+{
+    // 更新状态栏信息
+    m_statusLabel->setText(tr("已选择任意形状ROI"));
+    QString info = QString("任意形状ROI: %1 个点")
+        .arg(polygon.size());
+    m_pixelInfoLabel->setText(info);
+    
+    // 后续可以添加实际的ROI处理逻辑
+}
+
+void MainWindow::onRectangleROIButtonClicked()
+{
+    if (!m_processingWidget) {
+        return;
+    }
+    
+    // 切换到ROI选择模式
+    m_processingWidget->setROIMode(true);
+    
+    // 更新状态栏提示
+    m_statusLabel->setText(tr("矩形ROI选择模式：在图像上拖动鼠标选择区域"));
+    m_pixelInfoLabel->setText(tr("左键单击并拖动选择矩形区域，松开完成选择"));
+}
+
+void MainWindow::onApplyROI()
+{
+    if (!m_processingWidget) {
+        return;
+    }
+    
+    // 获取当前选择的ROI区域和类型
+    QRect rectangleROI = m_processingWidget->getRectangleROI();
+    QPoint circleCenter = m_processingWidget->getCircleCenter();
+    int circleRadius = m_processingWidget->getCircleRadius();
+    QPolygon arbitraryROI = m_processingWidget->getArbitraryROI();
+    
+    QImage processedImage = imageProcessor->getProcessedImage();
+    if (processedImage.isNull()) {
+        QMessageBox::warning(this, tr("错误"), tr("没有图像可用于ROI处理"), QMessageBox::Ok);
+        return;
+    }
+    
+    // 创建ROI图像
+    QImage roiImage;
+    QString roiInfo;
+    
+    // 根据ROI类型处理
+    if (!rectangleROI.isNull() && rectangleROI.width() > 0 && rectangleROI.height() > 0) {
+        // 矩形ROI
+        roiImage = processedImage.copy(rectangleROI);
+        
+        // 生成ROI信息
+        roiInfo = QString("矩形ROI区域(像素坐标):\n左上角: (%1, %2)\n宽高: %3 × %4")
+                        .arg(rectangleROI.x())
+                        .arg(rectangleROI.y())
+                        .arg(rectangleROI.width())
+                        .arg(rectangleROI.height());
+                        
+        // 获取ROI区域的均值和方差
+        double mean = 0.0, variance = 0.0;
+        calculateROIStats(processedImage, rectangleROI, mean, variance);
+        
+        roiInfo += QString("\n\n区域统计信息:\n均值: %1\n方差: %2")
+                        .arg(mean, 0, 'f', 2)
+                        .arg(variance, 0, 'f', 2);
+    }
+    else if (circleRadius > 0) {
+        // 圆形ROI - 创建一个与原图像尺寸相同的透明图像
+        roiImage = QImage(processedImage.size(), QImage::Format_ARGB32_Premultiplied);
+        roiImage.fill(Qt::transparent);
+        
+        // 创建一个绘制器
+        QPainter painter(&roiImage);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        
+        // 设置剪裁区域为圆形
+        QPainterPath path;
+        path.addEllipse(circleCenter, circleRadius, circleRadius);
+        painter.setClipPath(path);
+        
+        // 绘制原图像到剪裁区域
+        painter.drawImage(0, 0, processedImage);
+        painter.end();
+        
+        // 裁剪到包围盒大小
+        QRect boundingRect(circleCenter.x() - circleRadius, circleCenter.y() - circleRadius,
+                          circleRadius * 2, circleRadius * 2);
+        roiImage = roiImage.copy(boundingRect);
+        
+        // 生成ROI信息
+        roiInfo = QString("圆形ROI区域(像素坐标):\n中心: (%1, %2)\n半径: %3")
+                        .arg(circleCenter.x())
+                        .arg(circleCenter.y())
+                        .arg(circleRadius);
+                        
+        // 获取ROI区域的均值和方差
+        double mean = 0.0, variance = 0.0;
+        calculateCircleROIStats(processedImage, circleCenter, circleRadius, mean, variance);
+        
+        roiInfo += QString("\n\n区域统计信息:\n均值: %1\n方差: %2")
+                        .arg(mean, 0, 'f', 2)
+                        .arg(variance, 0, 'f', 2);
+    }
+    else if (arbitraryROI.size() > 2) {
+        // 任意形状ROI - 创建一个与原图像尺寸相同的透明图像
+        roiImage = QImage(processedImage.size(), QImage::Format_ARGB32_Premultiplied);
+        roiImage.fill(Qt::transparent);
+        
+        // 创建一个绘制器
+        QPainter painter(&roiImage);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        
+        // 设置剪裁区域为多边形
+        QPainterPath path;
+        path.addPolygon(arbitraryROI);
+        painter.setClipPath(path);
+        
+        // 绘制原图像到剪裁区域
+        painter.drawImage(0, 0, processedImage);
+        painter.end();
+        
+        // 计算多边形的包围盒
+        QRect boundingRect = arbitraryROI.boundingRect();
+        roiImage = roiImage.copy(boundingRect);
+        
+        // 生成ROI信息
+        roiInfo = QString("任意形状ROI区域(像素坐标):\n顶点数: %1\n包围盒: 左上(%2, %3), 宽高(%4 × %5)")
+                        .arg(arbitraryROI.size())
+                        .arg(boundingRect.x())
+                        .arg(boundingRect.y())
+                        .arg(boundingRect.width())
+                        .arg(boundingRect.height());
+                        
+        // 对于任意形状，统计信息暂不实现
+        roiInfo += "\n\n注意: 任意形状的统计信息暂不可用";
+    }
+    else {
+        QMessageBox::warning(this, tr("无效的ROI"), tr("请先选择一个有效的ROI区域"), QMessageBox::Ok);
+        return;
+    }
+    
+    // 显示ROI信息
+    QMessageBox::information(this, tr("ROI选择完成"), roiInfo, QMessageBox::Ok);
+    
+    // 保存ROI图像
+    QString filePath = QFileDialog::getSaveFileName(this, tr("保存ROI图像"),
+                                                  "", tr("图像文件 (*.png *.jpg *.bmp)"));
+    if (!filePath.isEmpty()) {
+        if (roiImage.save(filePath)) {
+            QMessageBox::information(this, tr("保存成功"), 
+                                   tr("ROI图像已保存到: %1").arg(filePath), 
+                                   QMessageBox::Ok);
+        } else {
+            QMessageBox::warning(this, tr("保存失败"), 
+                               tr("无法保存ROI图像到: %1").arg(filePath), 
+                               QMessageBox::Ok);
+        }
+    }
+    
+    // 切换回坐标显示模式
+    m_processingWidget->setROIMode(false);
+    
+    // 恢复状态栏提示
+    m_statusLabel->setText(tr("就绪"));
+    m_pixelInfoLabel->setText(tr("点击图像显示坐标和RGB值"));
 }
 
 

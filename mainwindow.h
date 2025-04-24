@@ -49,6 +49,13 @@ private slots:
     void onHistEqualClicked();
     void onResetToOriginal();
     void onShowHistogramChanged(bool show);
+    
+    // ROI选择相关槽函数
+    void onRectangleROISelected(const QRect& rect);
+    void onCircleROISelected(const QPoint& center, int radius);
+    void onArbitraryROISelected(const QPolygon& polygon);
+    void onApplyROI();
+    void onRectangleROIButtonClicked();
 
 private:
     void setupUI();
@@ -57,6 +64,10 @@ private:
     void setupStatusBar();
     void applyCurrentTransformations();    // 应用当前所有变换
     void updateHistogramDialog();          // Update histogram dialog with current image
+    
+    // ROI统计计算函数
+    void calculateROIStats(const QImage& image, const QRect& roi, double& mean, double& variance);
+    void calculateCircleROIStats(const QImage& image, const QPoint& center, int radius, double& mean, double& variance);
 
     ProcessingWidget *m_processingWidget;
     ImageProcessor *imageProcessor;

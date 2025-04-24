@@ -6,7 +6,6 @@
 #include <QPixmap>
 #include <QCheckBox>
 #include <QSpinBox>
-#include <QApplication>
 #include "../ImageProcessor/ImageProcessor.h"
 // 注释掉不存在的头文件
 // #include "ImageProcessorThread.h"
@@ -25,7 +24,6 @@ class QFrame;
 class QSpinBox;
 class QButtonGroup;
 class QToolButton;
-class ROIOverlay;  // 添加ROIOverlay前置声明
 
 // 定义ROI选择模式枚举
 enum class ROISelectionMode {
@@ -53,7 +51,7 @@ public:
     QPushButton* getMedianFilterButton() const { return btnMedianFilter; }
     QPushButton* getHistEqualButton() const { return btnHistEqual; }
     QPushButton* getApplyROIButton() const { return btnApplyROI; }
-    QToolButton* getRectangleROIButton() const { return btnRectangleSelection; }
+    QPushButton* getRectangleROIButton() const { return btnRectangleROI; }
 
     // 获取滑块接口
     QSlider* getBrightnessSlider() const { return sliderBrightness; }
@@ -76,14 +74,11 @@ public:
     void resetValueLabels();
     
     // ROI选择模式控制
-    void setROIMode(bool enableROI);
+    void setROIMode(bool enableROI) { m_isROIMode = enableROI; update(); }
     bool isROIMode() const { return m_isROIMode; }
     
-    // 获取当前选择的矩形ROI (以实际图像像素坐标表示)
-    QRect getRectangleROI() const { return m_imageRectangleROI; }
-    QPoint getCircleCenter() const { return m_imageCircleCenter; }
-    int getCircleRadius() const { return m_imageCircleRadius; }
-    QPolygon getArbitraryROI() const { return m_imageArbitraryROI; }
+    // 获取当前选择的矩形ROI
+    QRect getRectangleROI() const { return m_rectangleROI; }
 
 signals:
     void mouseClicked(const QPoint& pos, int grayValue, int r, int g, int b);
@@ -101,7 +96,6 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
-    void resizeEvent(QResizeEvent *event) override;  // 添加尺寸变化事件
 
 private slots:
     void onImageProcessed(const QImage &processedImage);
@@ -111,22 +105,12 @@ private slots:
     void updateGammaValueLabel(int value);
     void onROISelectionModeChanged(int id);
     void clearROISelection();
-    
-    // 添加方法来强制更新ROI显示
-    void updateROIDisplay();
 
 private:
     void setupUi();
     void setupROISelectionControls();
     void updateImageStats();
-    double calculateMeanValue(const QImage &image);  // 计算图像均值
-    
-    // 坐标转换方法
-    QPoint mapToImageCoordinates(const QPoint& uiPos); // UI坐标转换为图像坐标
-    QPoint mapFromImageCoordinates(const QPoint& imagePos); // 图像坐标转换为UI坐标
-    QRect mapToImageRect(const QRect& uiRect); // UI矩形转换为图像矩形
-    QRect mapFromImageRect(const QRect& imageRect); // 图像矩形转换为UI矩形
-    QRect getScaledImageRect(); // 获取图像在控件中的实际显示区域
+    double calculateMeanValue(const QImage &image);  // 新添加的方法声明
 
     // 缩放相关
     double m_zoomFactor = 1.0;
@@ -159,9 +143,8 @@ private:
     QToolButton *btnClearSelection; // 清除选择按钮
     QPushButton *btnApplyROI; // 应用ROI按钮
     QPushButton *btnRectangleROI; // 矩形ROI按钮
-    ROIOverlay *m_roiOverlay;      // ROI覆盖层
     
-    // ROI选择状态 (UI坐标)
+    // ROI选择状态
     ROISelectionMode m_currentROIMode = ROISelectionMode::None;
     bool m_selectionInProgress = false;
     QPoint m_selectionStart;
@@ -171,12 +154,6 @@ private:
     QPoint m_circleCenter;
     int m_circleRadius = 0;
     QPolygon m_arbitraryROI;
-    
-    // ROI选择状态 (图像像素坐标)
-    QRect m_imageRectangleROI;     // 以图像像素为单位的矩形ROI
-    QPoint m_imageCircleCenter;    // 以图像像素为单位的圆形ROI中心
-    int m_imageCircleRadius = 0;   // 以图像像素为单位的圆形ROI半径
-    QPolygon m_imageArbitraryROI;  // 以图像像素为单位的任意形状ROI
     
     // 控制鼠标响应的全局变量
     bool m_isROIMode = false; // false表示显示坐标模式，true表示ROI选择模式
@@ -203,4 +180,4 @@ private:
     // ImageProcessorThread *m_processorThread;
 };
 
-#endif // PROCESSINGWIDGET_H
+#endif // PROCESSINGWIDGET_H 
