@@ -17,6 +17,7 @@
 #include <QButtonGroup>
 #include <QToolButton>
 #include <QIcon>
+#include <QMessageBox>
 
 // 辅助函数声明
 void logRectInfo(const QString& prefix, const QRect& rect);
@@ -30,10 +31,13 @@ public:
         setAttribute(Qt::WA_TranslucentBackground);    // 透明背景
     }
 
+    // 更新ROIOverlay的setROIData方法，支持多圆和环形ROI
     void setROIData(const QRect& rect, const QPoint& center, int radius, 
                    const QVector<QPoint>& points, bool inProgress,
                    const QRect& imageRect, int imageWidth, int imageHeight,
-                   const QRect& actualImageRect, int imageCircleRadius = 0) {
+                   const QRect& actualImageRect, int imageCircleRadius = 0,
+                   const QPoint& secondCenter = QPoint(), int secondRadius = 0,
+                   int secondImageRadius = 0, MultiCircleState multiCircleState = MultiCircleState::None) {
         m_rectangleROI = rect;
         m_circleCenter = center;
         m_circleRadius = radius;
@@ -44,6 +48,12 @@ public:
         m_imageHeight = imageHeight;
         m_actualImageRect = actualImageRect; // 保存实际图像显示区域
         m_imageCircleRadius = imageCircleRadius; // 保存图像坐标中的圆半径
+        
+        // 新增: 保存第二个圆数据和多圆状态
+        m_secondCircleCenter = secondCenter;
+        m_secondCircleRadius = secondRadius;
+        m_secondImageCircleRadius = secondImageRadius;
+        m_multiCircleState = multiCircleState;
         
         // 计算宽高比例
         if (imageWidth > 0 && imageHeight > 0 && 
@@ -173,9 +183,15 @@ protected:
         
         // 绘制圆形ROI - 修复圆形绘制问题
         if (m_circleRadius > 0) {
-            // 恢复ROI的绘制颜色和样式
-            painter.setPen(pen);
-            painter.setBrush(brush);
+            // 使用不同的颜色绘制第一个圆形
+            QPen circlePen = m_multiCircleState >= MultiCircleState::FirstCircle ? 
+                            QPen(QColor(0, 128, 255)) : pen; // 蓝色表示第一个圆
+            circlePen.setWidth(2);
+            painter.setPen(circlePen);
+            
+            QBrush circleBrush = m_multiCircleState >= MultiCircleState::FirstCircle ? 
+                               QBrush(QColor(0, 128, 255, 40)) : brush; // 半透明蓝色
+            painter.setBrush(circleBrush);
             
             // 检查圆心是否在图像区域内
             if (m_actualImageRect.contains(m_circleCenter)) {
@@ -208,6 +224,9 @@ protected:
                     painter.setFont(font);
                     
                     QString sizeInfo = QString("R=%1").arg(m_imageCircleRadius);
+                    if (m_multiCircleState >= MultiCircleState::FirstCircle) {
+                        sizeInfo = QString("R1=%1").arg(m_imageCircleRadius);
+                    }
                     QPen textPen(Qt::white);
                     painter.setPen(textPen);
                     
@@ -238,6 +257,131 @@ protected:
                         painter.fillRect(textRect, QColor(0, 0, 0, 128));
                         painter.drawText(textRect, Qt::AlignCenter, sizeInfo);
                     }
+                }
+            }
+        }
+        
+        // 新增：绘制第二个圆形ROI
+        if (m_multiCircleState >= MultiCircleState::SecondCircle && m_secondCircleRadius > 0) {
+            // 使用不同的颜色绘制第二个圆形
+            QPen secondCirclePen(QColor(255, 128, 0)); // 橙色表示第二个圆
+            secondCirclePen.setWidth(2);
+            painter.setPen(secondCirclePen);
+            
+            QBrush secondCircleBrush(QColor(255, 128, 0, 40)); // 半透明橙色
+            painter.setBrush(secondCircleBrush);
+            
+            // 检查圆心是否在图像区域内
+            if (m_actualImageRect.contains(m_secondCircleCenter)) {
+                // 计算圆与图像区域相交的部分
+                int clippedRadius = m_secondCircleRadius;
+                
+                // 边界裁剪计算
+                clippedRadius = qMin(clippedRadius, m_secondCircleCenter.x() - m_actualImageRect.left());
+                clippedRadius = qMin(clippedRadius, m_actualImageRect.right() - m_secondCircleCenter.x());
+                clippedRadius = qMin(clippedRadius, m_secondCircleCenter.y() - m_actualImageRect.top());
+                clippedRadius = qMin(clippedRadius, m_actualImageRect.bottom() - m_secondCircleCenter.y());
+                
+                // 绘制圆形
+                if (clippedRadius > 0) {
+                    painter.drawEllipse(m_secondCircleCenter, clippedRadius, clippedRadius);
+                    
+                    // 在圆心绘制十字线
+                    QPen centerPen(QColor(255, 255, 255)); // 白色中心点
+                    centerPen.setWidth(1);
+                    painter.setPen(centerPen);
+                    int crossSize = 6;
+                    painter.drawLine(m_secondCircleCenter.x() - crossSize, m_secondCircleCenter.y(),
+                                  m_secondCircleCenter.x() + crossSize, m_secondCircleCenter.y());
+                    painter.drawLine(m_secondCircleCenter.x(), m_secondCircleCenter.y() - crossSize,
+                                  m_secondCircleCenter.x(), m_secondCircleCenter.y() + crossSize);
+                    
+                    // 显示圆形ROI信息
+                    QFont font = painter.font();
+                    font.setPointSize(9);
+                    painter.setFont(font);
+                    
+                    QString sizeInfo = QString("R2=%1").arg(m_secondImageCircleRadius);
+                    
+                    QPen textPen(Qt::white);
+                    painter.setPen(textPen);
+                    
+                    // 绘制半透明背景
+                    QRect textRect = painter.fontMetrics().boundingRect(sizeInfo);
+                    textRect.adjust(-5, -3, 5, 3);
+                    
+                    // 确保文本显示在图像区域内 - 在圆下方
+                    QPoint textPos = QPoint(m_secondCircleCenter.x() - textRect.width()/2, 
+                                          m_secondCircleCenter.y() + clippedRadius + 5);
+                    
+                    if (textPos.y() + textRect.height() > m_actualImageRect.bottom()) {
+                        textPos.setY(m_secondCircleCenter.y() - clippedRadius - textRect.height() - 5);
+                    }
+                    
+                    if (textPos.x() < m_actualImageRect.left()) {
+                        textPos.setX(m_actualImageRect.left());
+                    }
+                    if (textPos.x() + textRect.width() > m_actualImageRect.right()) {
+                        textPos.setX(m_actualImageRect.right() - textRect.width());
+                    }
+                    
+                    textRect.moveTopLeft(textPos);
+                    
+                    // 确保文本区域在图像内
+                    textRect = textRect.intersected(m_actualImageRect);
+                    if (!textRect.isEmpty()) {
+                        painter.fillRect(textRect, QColor(0, 0, 0, 128));
+                        painter.drawText(textRect, Qt::AlignCenter, sizeInfo);
+                    }
+                }
+            }
+            
+            // 如果两个圆都已经选择完成，绘制环形区域指示
+            if (m_multiCircleState == MultiCircleState::RingROI) {
+                // 使用不同的颜色表示环形区域
+                QPen ringPen(QColor(255, 0, 128)); // 粉红色表示环形区域
+                ringPen.setWidth(2);
+                ringPen.setStyle(Qt::DotLine);
+                painter.setPen(ringPen);
+                
+                QBrush ringBrush(QColor(255, 0, 128, 30)); // 半透明粉红色
+                painter.setBrush(ringBrush);
+                
+                // 为环形区域添加标记 - 在两圆之间绘制连接线
+                painter.drawLine(m_circleCenter, m_secondCircleCenter);
+                
+                // 计算环形区域的中点位置
+                QPoint midPoint((m_circleCenter.x() + m_secondCircleCenter.x()) / 2,
+                              (m_circleCenter.y() + m_secondCircleCenter.y()) / 2);
+                
+                // 计算环形区域的描述（根据两个圆的位置和大小关系）
+                QString ringDescription;
+                
+                // 判断两个圆的位置关系
+                double centerDistance = sqrt(
+                    pow(m_secondCircleCenter.x() - m_circleCenter.x(), 2) +
+                    pow(m_secondCircleCenter.y() - m_circleCenter.y(), 2)
+                );
+                
+                if (centerDistance < m_circleRadius + m_secondCircleRadius) {
+                    // 两个圆相交
+                    ringDescription = "相交环形ROI";
+                } else {
+                    // 两个圆分离
+                    ringDescription = "分离环形ROI";
+                }
+                
+                // 绘制环形区域说明
+                QRect textRect = painter.fontMetrics().boundingRect(ringDescription);
+                textRect.adjust(-5, -3, 5, 3);
+                textRect.moveCenter(midPoint);
+                
+                // 确保文本区域在图像内
+                textRect = textRect.intersected(m_actualImageRect);
+                if (!textRect.isEmpty()) {
+                    painter.fillRect(textRect, QColor(0, 0, 0, 128));
+                    painter.setPen(Qt::white);
+                    painter.drawText(textRect, Qt::AlignCenter, ringDescription);
                 }
             }
         }
@@ -291,6 +435,12 @@ private:
     int m_imageHeight = 0;
     QRect m_actualImageRect; // 实际图像显示区域
     int m_imageCircleRadius = 0; // 图像坐标中的圆半径
+    
+    // 新增：第二个圆和多圆状态
+    QPoint m_secondCircleCenter;
+    int m_secondCircleRadius = 0;
+    int m_secondImageCircleRadius = 0;
+    MultiCircleState m_multiCircleState = MultiCircleState::None;
 };
 
 ProcessingWidget::ProcessingWidget(QWidget *parent)
@@ -761,17 +911,35 @@ void ProcessingWidget::setupROISelectionControls()
             switch (m_currentROIMode) {
                 case ROISelectionMode::Rectangle:
                     if (!m_rectangleROI.isNull()) {
-                        emit roiSelected(m_rectangleROI);
+                        emit roiSelected(m_imageRectangleROI);
                     }
                     break;
                 case ROISelectionMode::Circle:
-                    if (m_circleRadius > 0) {
-                        emit roiSelected(m_circleCenter, m_circleRadius);
+                    // 处理不同的圆形ROI状态
+                    if (m_multiCircleState == MultiCircleState::RingROI) {
+                        // 如果是环形ROI，发送环形ROI信号
+                        emit ringROISelected(m_imageCircleCenter, m_imageCircleRadius,
+                                           m_imageSecondCircleCenter, m_imageSecondCircleRadius);
+                    }
+                    else if (m_multiCircleState == MultiCircleState::SecondCircle) {
+                        // 如果已选择第二个圆但尚未计算环形，计算并发送环形ROI
+                        calculateRingROI();
+                        emit ringROISelected(m_imageCircleCenter, m_imageCircleRadius,
+                                           m_imageSecondCircleCenter, m_imageSecondCircleRadius);
+                    }
+                    else if (m_multiCircleState == MultiCircleState::FirstCircle) {
+                        // 如果只有第一个圆，提示用户选择第二个圆
+                        qDebug() << "已选择第一个圆，请继续选择第二个圆以创建环形ROI";
+                        // 也可以显示一个消息框提示用户
+                    }
+                    else if (m_circleRadius > 0) {
+                        // 兼容单圆模式
+                        emit roiSelected(m_imageCircleCenter, m_imageCircleRadius);
                     }
                     break;
                 case ROISelectionMode::Arbitrary:
                     if (m_arbitraryPoints.size() > 2) {
-                        emit roiSelected(QPolygon(m_arbitraryPoints));
+                        emit roiSelected(QPolygon(m_imageArbitraryROI));
                     }
                     break;
                 default:
@@ -958,6 +1126,19 @@ void ProcessingWidget::clearROISelection()
     m_circleRadius = 0;
     m_arbitraryROI = QPolygon();
     
+    // 清除图像坐标的ROI
+    m_imageRectangleROI = QRect();
+    m_imageCircleCenter = QPoint();
+    m_imageCircleRadius = 0;
+    m_imageArbitraryROI = QPolygon();
+    
+    // 新增：清除多圆ROI相关数据
+    m_multiCircleState = MultiCircleState::None;
+    m_secondCircleCenter = QPoint();
+    m_secondCircleRadius = 0;
+    m_imageSecondCircleCenter = QPoint();
+    m_imageSecondCircleRadius = 0;
+    
     // 取消任何按钮的选中状态
     if (roiSelectionGroup) {
         QAbstractButton *checkedButton = roiSelectionGroup->checkedButton();
@@ -1033,11 +1214,27 @@ void ProcessingWidget::mousePressEvent(QMouseEvent *event)
                 
                 switch (m_currentROIMode) {
                     case ROISelectionMode::Rectangle:
-                    case ROISelectionMode::Circle:
-                        // 初始化选择区域
+                        // 初始化矩形选择区域
                         m_rectangleROI = QRect(m_selectionStart, m_selectionStart);
-                        m_circleCenter = m_selectionStart;
-                        m_circleRadius = 0;
+                        break;
+                        
+                    case ROISelectionMode::Circle:
+                        // 初始化圆形选择区域 - 根据当前多圆状态决定是处理第一个圆还是第二个圆
+                        if (m_multiCircleState == MultiCircleState::FirstCircle) {
+                            qDebug() << "开始选择第二个圆";
+                            // 当开始选择第二个圆时，不要使用m_circleCenter，而是直接使用m_secondCircleCenter
+                            m_secondCircleCenter = m_selectionStart;
+                            m_secondCircleRadius = 0;
+                            m_imageSecondCircleCenter = mapToImageCoordinates(m_selectionStart);
+                            m_imageSecondCircleRadius = 0;
+                        } else {
+                            qDebug() << "开始选择第一个圆";
+                            // 第一次选择圆或重新开始选择
+                            m_circleCenter = m_selectionStart;
+                            m_circleRadius = 0;
+                            m_imageCircleCenter = mapToImageCoordinates(m_selectionStart);
+                            m_imageCircleRadius = 0;
+                        }
                         break;
                         
                     case ROISelectionMode::Arbitrary:
@@ -1213,38 +1410,66 @@ void ProcessingWidget::mouseMoveEvent(QMouseEvent *event)
                 }
                 qDebug() << "-------------------------------";
             } else if (m_currentROIMode == ROISelectionMode::Circle) {
-                // 更新圆形选择 (UI坐标) - 圆心是起始点，半径是到当前点的距离
-                m_circleCenter = m_selectionStart;
-                int dx = m_selectionCurrent.x() - m_selectionStart.x();
-                int dy = m_selectionCurrent.y() - m_selectionStart.y();
-                m_circleRadius = static_cast<int>(sqrt(dx*dx + dy*dy));
-                
-                // 更新对应的图像坐标
-                m_imageCircleCenter = mapToImageCoordinates(m_circleCenter);
-                
-                // 确保圆心有效
-                if (m_imageCircleCenter.x() >= 0 && m_imageCircleCenter.y() >= 0) {
-                    // 计算图像坐标中的半径 - 找到圆边缘上一点，映射到图像坐标系
-                    double angle = 0; // 取圆上的水平右侧点
+                // 根据当前状态决定更新第一个圆还是第二个圆
+                if (m_multiCircleState == MultiCircleState::FirstCircle) {
+                    // 更新第二个圆
+                    int dx = m_selectionCurrent.x() - m_selectionStart.x();
+                    int dy = m_selectionCurrent.y() - m_selectionStart.y();
+                    m_secondCircleRadius = static_cast<int>(sqrt(dx*dx + dy*dy));
+                    
+                    // 更新图像坐标
                     QPoint edgePoint(
-                        m_circleCenter.x() + qRound(m_circleRadius * cos(angle)),
-                        m_circleCenter.y() + qRound(m_circleRadius * sin(angle))
+                        m_secondCircleCenter.x() + qRound(m_secondCircleRadius * cos(0)),
+                        m_secondCircleCenter.y() + qRound(m_secondCircleRadius * sin(0))
                     );
                     
-                    // 确保边缘点在图像区域内
                     if (actualImageRect.contains(edgePoint)) {
                         QPoint imageEdgePoint = mapToImageCoordinates(edgePoint);
                         
-                        // 计算图像坐标中的半径（两点间距离）
                         if (imageEdgePoint.x() >= 0 && imageEdgePoint.y() >= 0) {
-                            m_imageCircleRadius = static_cast<int>(
-                                sqrt(pow(imageEdgePoint.x() - m_imageCircleCenter.x(), 2) + 
-                                    pow(imageEdgePoint.y() - m_imageCircleCenter.y(), 2))
+                            m_imageSecondCircleRadius = static_cast<int>(
+                                sqrt(pow(imageEdgePoint.x() - m_imageSecondCircleCenter.x(), 2) + 
+                                     pow(imageEdgePoint.y() - m_imageSecondCircleCenter.y(), 2))
                             );
                             
-                            // 打印调试信息
-                            qDebug() << "圆心(UI): " << m_circleCenter << " 半径: " << m_circleRadius;
-                            qDebug() << "圆心(图像): " << m_imageCircleCenter << " 半径: " << m_imageCircleRadius;
+                            qDebug() << "第二个圆 - 中心(UI): " << m_secondCircleCenter 
+                                     << " 半径: " << m_secondCircleRadius;
+                            qDebug() << "第二个圆 - 中心(图像): " << m_imageSecondCircleCenter 
+                                     << " 半径: " << m_imageSecondCircleRadius;
+                        }
+                    }
+                } else {
+                    // 更新第一个圆
+                    int dx = m_selectionCurrent.x() - m_selectionStart.x();
+                    int dy = m_selectionCurrent.y() - m_selectionStart.y();
+                    m_circleRadius = static_cast<int>(sqrt(dx*dx + dy*dy));
+                    
+                    // 更新对应的图像坐标
+                    m_imageCircleCenter = mapToImageCoordinates(m_circleCenter);
+                    
+                    // 计算图像坐标中的半径
+                    if (m_imageCircleCenter.x() >= 0 && m_imageCircleCenter.y() >= 0) {
+                        // 取圆上的水平右侧点
+                        double angle = 0;
+                        QPoint edgePoint(
+                            m_circleCenter.x() + qRound(m_circleRadius * cos(angle)),
+                            m_circleCenter.y() + qRound(m_circleRadius * sin(angle))
+                        );
+                        
+                        // 确保边缘点在图像区域内
+                        if (actualImageRect.contains(edgePoint)) {
+                            QPoint imageEdgePoint = mapToImageCoordinates(edgePoint);
+                            
+                            // 计算图像坐标中的半径（两点间距离）
+                            if (imageEdgePoint.x() >= 0 && imageEdgePoint.y() >= 0) {
+                                m_imageCircleRadius = static_cast<int>(
+                                    sqrt(pow(imageEdgePoint.x() - m_imageCircleCenter.x(), 2) + 
+                                        pow(imageEdgePoint.y() - m_imageCircleCenter.y(), 2))
+                                );
+                                
+                                qDebug() << "第一个圆 - 中心(UI): " << m_circleCenter << " 半径: " << m_circleRadius;
+                                qDebug() << "第一个圆 - 中心(图像): " << m_imageCircleCenter << " 半径: " << m_imageCircleRadius;
+                            }
                         }
                     }
                 }
@@ -1295,18 +1520,110 @@ void ProcessingWidget::mouseReleaseEvent(QMouseEvent *event)
                     if (m_circleRadius > 5) {
                         // 确保m_imageCircleCenter和m_imageCircleRadius有效
                         if (m_imageCircleCenter.x() >= 0 && m_imageCircleRadius > 0) {
-                            // 发送ROI选择信号 (传递图像坐标)
-                            emit roiSelected(m_imageCircleCenter, m_imageCircleRadius);
                             
-                            // 启用应用按钮
-                            if (btnApplyROI) {
-                                btnApplyROI->setEnabled(true);
+                            // 根据多圆选择状态处理
+                            if (m_multiCircleState == MultiCircleState::None) {
+                                // 第一个圆选择完成，保存第一个圆的信息
+                                QPoint firstCircleCenter = m_circleCenter;
+                                int firstCircleRadius = m_circleRadius;
+                                QPoint firstImageCircleCenter = m_imageCircleCenter;
+                                int firstImageCircleRadius = m_imageCircleRadius;
+                                
+                                // 转换到多圆状态
+                                m_multiCircleState = MultiCircleState::FirstCircle;
+                                
+                                qDebug() << "第一个圆形ROI选择完成";
+                                qDebug() << "UI中心: " << firstCircleCenter << " 半径: " << firstCircleRadius;
+                                qDebug() << "图像中心: " << firstImageCircleCenter << " 半径: " << firstImageCircleRadius;
+                                
+                                // 需要立即进入选择第二个圆的状态，不要发送信号
+                                // 提示用户继续选择第二个圆
+                                QMessageBox::information(this, tr("第一个圆选择完成"), 
+                                                       tr("请继续选择第二个圆以创建环形ROI"));
+                                
+                                // 重置选择状态，但保持ROI模式，以便用户可以继续选择第二个圆
+                                m_selectionInProgress = false;
+                                
+                                // 不启用应用按钮，直到选择完第二个圆
+                                if (btnApplyROI) {
+                                    btnApplyROI->setEnabled(false);
+                                }
+                            } 
+                            else if (m_multiCircleState == MultiCircleState::FirstCircle) {
+                                // 第二个圆选择完成，已经在鼠标移动事件中更新了m_secondCircleCenter等变量
+                                // 打印调试信息用于诊断问题
+                                qDebug() << "检查两个圆是否相同:";
+                                qDebug() << "第一个圆 - 中心:" << m_imageCircleCenter << "半径:" << m_imageCircleRadius;
+                                qDebug() << "第二个圆 - 中心:" << m_imageSecondCircleCenter << "半径:" << m_imageSecondCircleRadius;
+                                
+                                // 判断圆心是否相同需要更精确的比较
+                                double centerDistance = sqrt(
+                                    pow(m_imageSecondCircleCenter.x() - m_imageCircleCenter.x(), 2) +
+                                    pow(m_imageSecondCircleCenter.y() - m_imageCircleCenter.y(), 2)
+                                );
+                                
+                                // 只有当圆心距离接近0且半径几乎相同时才认为是相同的圆
+                                if (centerDistance < 1.0 && abs(m_imageSecondCircleRadius - m_imageCircleRadius) < 1) {
+                                    // 两个圆完全相同，提示用户重新选择
+                                    QMessageBox::warning(this, tr("无效的选择"), 
+                                                       tr("两个圆的中心和半径完全相同，请重新选择第二个圆"),
+                                                       QMessageBox::Ok);
+                                    
+                                    // 重置第二个圆的选择，保持在FirstCircle状态
+                                    m_selectionInProgress = false;
+                                    // 清除第二个圆的数据
+                                    m_secondCircleCenter = QPoint();
+                                    m_secondCircleRadius = 0;
+                                    m_imageSecondCircleCenter = QPoint();
+                                    m_imageSecondCircleRadius = 0;
+                                    return;
+                                }
+                                
+                                // 第二个圆选择完成，更新状态
+                                m_multiCircleState = MultiCircleState::SecondCircle;
+                                
+                                qDebug() << "第二个圆形ROI选择完成";
+                                qDebug() << "UI中心: " << m_secondCircleCenter << " 半径: " << m_secondCircleRadius;
+                                qDebug() << "图像中心: " << m_imageSecondCircleCenter << " 半径: " << m_imageSecondCircleRadius;
+                                
+                                // 计算环形ROI
+                                calculateRingROI();
+                                
+                                // 获取环形ROI中的像素
+                                QVector<int> pixels = getRingROIPixelValues();
+                                
+                                // 检查是否有有效像素
+                                if (pixels.isEmpty()) {
+                                    // 环形区域中没有有效像素
+                                    QMessageBox::warning(this, tr("无效的环形区域"), 
+                                                       tr("环形区域中没有找到有效像素，请重新选择两个圆"),
+                                                       QMessageBox::Ok);
+                                    
+                                    // 重置到第一个圆的状态，让用户重新选择第二个圆
+                                    m_multiCircleState = MultiCircleState::FirstCircle;
+                                    m_selectionInProgress = false;
+                                    // 清除第二个圆的数据
+                                    m_secondCircleCenter = QPoint();
+                                    m_secondCircleRadius = 0;
+                                    m_imageSecondCircleCenter = QPoint();
+                                    m_imageSecondCircleRadius = 0;
+                                    return;
+                                }
+                                
+                                // 两个圆都选择完成，发送环形ROI选择完成信号
+                                emit ringROISelected(m_imageCircleCenter, m_imageCircleRadius,
+                                                  m_imageSecondCircleCenter, m_imageSecondCircleRadius);
+                                
+                                // 此时才启用应用按钮
+                                if (btnApplyROI) {
+                                    btnApplyROI->setEnabled(true);
+                                }
+                                
+                                // 提示用户环形ROI已创建完成
+                                QMessageBox::information(this, tr("环形ROI创建完成"), 
+                                                       tr("环形ROI创建完成，包含 %1 个像素点，您可以点击'应用ROI'按钮进行操作")
+                                                       .arg(pixels.size()));
                             }
-                            
-                            // 打印调试信息
-                            qDebug() << "圆形ROI选择完成";
-                            qDebug() << "UI中心: " << m_circleCenter << " 半径: " << m_circleRadius;
-                            qDebug() << "图像中心: " << m_imageCircleCenter << " 半径: " << m_imageCircleRadius;
                         }
                     }
                     break;
@@ -1683,12 +2000,26 @@ void ProcessingWidget::updateROIDisplay()
         // 确保覆盖层大小与imageLabel一致
         m_roiOverlay->setGeometry(0, 0, imageLabel->width(), imageLabel->height());
         
-        // 更新ROI数据
-        m_roiOverlay->setROIData(m_rectangleROI, m_circleCenter, m_circleRadius,
-                               m_arbitraryPoints, m_selectionInProgress,
-                               m_imageRectangleROI, 
-                               m_currentImage.width(), m_currentImage.height(),
-                               actualImageRect, m_imageCircleRadius);
+        // 更新ROI数据 - 在选择第二个圆时，传递正确的信息
+        if (m_multiCircleState == MultiCircleState::FirstCircle) {
+            // 如果正在选择第二个圆，则传递第一个圆和正在选择的第二个圆的信息
+            m_roiOverlay->setROIData(m_rectangleROI, m_circleCenter, m_circleRadius,
+                                   m_arbitraryPoints, m_selectionInProgress,
+                                   m_imageRectangleROI, 
+                                   m_currentImage.width(), m_currentImage.height(),
+                                   actualImageRect, m_imageCircleRadius,
+                                   m_secondCircleCenter, m_secondCircleRadius,
+                                   m_imageSecondCircleRadius, m_multiCircleState);
+        } else {
+            // 否则，传递当前的ROI信息
+            m_roiOverlay->setROIData(m_rectangleROI, m_circleCenter, m_circleRadius,
+                                   m_arbitraryPoints, m_selectionInProgress,
+                                   m_imageRectangleROI, 
+                                   m_currentImage.width(), m_currentImage.height(),
+                                   actualImageRect, m_imageCircleRadius,
+                                   m_secondCircleCenter, m_secondCircleRadius,
+                                   m_imageSecondCircleRadius, m_multiCircleState);
+        }
         m_roiOverlay->update();
     }
 }
@@ -1717,6 +2048,112 @@ void ProcessingWidget::resizeEvent(QResizeEvent *event)
         // 更新ROI显示
         updateROIDisplay();
     }
+}
+
+// 实现计算环形ROI区域的方法
+void ProcessingWidget::calculateRingROI()
+{
+    // 只有当两个圆都有效时才进行计算
+    if (m_imageCircleRadius <= 0 || m_imageSecondCircleRadius <= 0) {
+        qDebug() << "环形ROI计算失败：圆半径无效";
+        return;
+    }
+    
+    // 设置状态为已完成环形ROI计算
+    m_multiCircleState = MultiCircleState::RingROI;
+    
+    // 对于环形ROI，不再需要固定内外圆的概念
+    // 我们允许两个圆之间有任意位置关系，只要能构成有效区域
+    
+    qDebug() << "环形ROI计算完成:";
+    qDebug() << "第一个圆 - 中心:" << m_imageCircleCenter << "半径:" << m_imageCircleRadius;
+    qDebug() << "第二个圆 - 中心:" << m_imageSecondCircleCenter << "半径:" << m_imageSecondCircleRadius;
+    
+    // 获取环形ROI中的像素值进行测试
+    QVector<int> pixelValues = getRingROIPixelValues();
+    qDebug() << "环形ROI包含" << pixelValues.size() << "个像素点";
+    
+    // 如果像素数量不太多，可以输出一些示例像素值
+    if (!pixelValues.isEmpty()) {
+        int sampleSize = qMin(10, pixelValues.size());
+        QStringList sampleValues;
+        for (int i = 0; i < sampleSize; ++i) {
+            sampleValues << QString::number(pixelValues[i]);
+        }
+        qDebug() << "像素值样本:" << sampleValues.join(", ");
+    }
+}
+
+// 判断点是否在环形区域内 - 不再局限于内圆和外圆的关系
+bool ProcessingWidget::isPointInRingROI(const QPoint& point) const
+{
+    if (m_imageCircleRadius <= 0 || m_imageSecondCircleRadius <= 0) {
+        return false;
+    }
+    
+    // 计算点到两个圆心的距离
+    double dx1 = point.x() - m_imageCircleCenter.x();
+    double dy1 = point.y() - m_imageCircleCenter.y();
+    double dist1 = sqrt(dx1*dx1 + dy1*dy1);
+    
+    double dx2 = point.x() - m_imageSecondCircleCenter.x();
+    double dy2 = point.y() - m_imageSecondCircleCenter.y();
+    double dist2 = sqrt(dx2*dx2 + dy2*dy2);
+    
+    // 计算点到圆心的距离与圆半径的关系
+    bool inCircle1 = (dist1 <= m_imageCircleRadius);
+    bool inCircle2 = (dist2 <= m_imageSecondCircleRadius);
+    
+    // 环形区域的定义：点在第二个圆内但不在第一个圆内（或相反）
+    // 即点只属于其中一个圆，这样定义的环形区域更灵活
+    return (inCircle1 && !inCircle2) || (inCircle2 && !inCircle1);
+}
+
+// 实现获取环形ROI中像素值的方法
+QVector<int> ProcessingWidget::getRingROIPixelValues() const
+{
+    QVector<int> pixelValues;
+    
+    // 检查图像和环形ROI是否有效
+    if (m_currentImage.isNull() || 
+        m_imageCircleRadius <= 0 || 
+        m_imageSecondCircleRadius <= 0 ||
+        m_multiCircleState != MultiCircleState::RingROI) {
+        return pixelValues;
+    }
+    
+    // 确定环形区域的边界盒
+    int left = qMin(m_imageCircleCenter.x() - m_imageCircleRadius,
+                 m_imageSecondCircleCenter.x() - m_imageSecondCircleRadius);
+    int top = qMin(m_imageCircleCenter.y() - m_imageCircleRadius,
+                m_imageSecondCircleCenter.y() - m_imageSecondCircleRadius);
+    int right = qMax(m_imageCircleCenter.x() + m_imageCircleRadius,
+                 m_imageSecondCircleCenter.x() + m_imageSecondCircleRadius);
+    int bottom = qMax(m_imageCircleCenter.y() + m_imageCircleRadius,
+                 m_imageSecondCircleCenter.y() + m_imageSecondCircleRadius);
+    
+    // 确保边界盒在图像范围内
+    left = qMax(0, left);
+    top = qMax(0, top);
+    right = qMin(m_currentImage.width() - 1, right);
+    bottom = qMin(m_currentImage.height() - 1, bottom);
+    
+    // 遍历边界盒中的每个像素
+    for (int y = top; y <= bottom; ++y) {
+        for (int x = left; x <= right; ++x) {
+            QPoint pixelPos(x, y);
+            
+            // 检查像素是否在环形区域内
+            if (isPointInRingROI(pixelPos)) {
+                // 获取像素灰度值
+                QColor pixelColor = m_currentImage.pixelColor(x, y);
+                int grayValue = qGray(pixelColor.red(), pixelColor.green(), pixelColor.blue());
+                pixelValues.append(grayValue);
+            }
+        }
+    }
+    
+    return pixelValues;
 }
 
 

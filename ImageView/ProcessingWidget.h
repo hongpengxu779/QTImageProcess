@@ -35,6 +35,14 @@ enum class ROISelectionMode {
     Arbitrary
 };
 
+// 新增：多圆ROI状态枚举
+enum class MultiCircleState {
+    None,           // 未开始选择
+    FirstCircle,    // 已选择第一个圆
+    SecondCircle,   // 已选择第二个圆
+    RingROI         // 已生成环形ROI
+};
+
 class ProcessingWidget : public QWidget {
     Q_OBJECT
 public:
@@ -85,6 +93,16 @@ public:
     int getCircleRadius() const { return m_imageCircleRadius; }
     QPolygon getArbitraryROI() const { return m_imageArbitraryROI; }
 
+    // 新增：获取多圆ROI相关信息
+    QPoint getFirstCircleCenter() const { return m_imageCircleCenter; }
+    int getFirstCircleRadius() const { return m_imageCircleRadius; }
+    QPoint getSecondCircleCenter() const { return m_imageSecondCircleCenter; }
+    int getSecondCircleRadius() const { return m_imageSecondCircleRadius; }
+    MultiCircleState getMultiCircleState() const { return m_multiCircleState; }
+    
+    // 新增：获取环形ROI中的像素值
+    QVector<int> getRingROIPixelValues() const;
+
 signals:
     void mouseClicked(const QPoint& pos, int grayValue, int r, int g, int b);
     void mouseMoved(const QPoint& pos, int grayValue);
@@ -94,6 +112,10 @@ signals:
     void roiSelected(const QRect& rect); // Signal for rectangle ROI
     void roiSelected(const QPoint& center, int radius); // Signal for circle ROI
     void roiSelected(const QPolygon& polygon); // Signal for arbitrary ROI
+    
+    // 新增：环形ROI选择完成信号
+    void ringROISelected(const QPoint& firstCenter, int firstRadius, 
+                         const QPoint& secondCenter, int secondRadius);
 
 protected:
     void mousePressEvent(QMouseEvent *event) override;
@@ -101,7 +123,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
-    void resizeEvent(QResizeEvent *event) override;  // 添加尺寸变化事件
+    void resizeEvent(QResizeEvent *event) override;
 
 private slots:
     void onImageProcessed(const QImage &processedImage);
@@ -111,22 +133,26 @@ private slots:
     void updateGammaValueLabel(int value);
     void onROISelectionModeChanged(int id);
     void clearROISelection();
-    
-    // 添加方法来强制更新ROI显示
-    void updateROIDisplay();
 
 private:
     void setupUi();
     void setupROISelectionControls();
     void updateImageStats();
-    double calculateMeanValue(const QImage &image);  // 计算图像均值
+    double calculateMeanValue(const QImage &image);
     
     // 坐标转换方法
-    QPoint mapToImageCoordinates(const QPoint& uiPos); // UI坐标转换为图像坐标
-    QPoint mapFromImageCoordinates(const QPoint& imagePos); // 图像坐标转换为UI坐标
-    QRect mapToImageRect(const QRect& uiRect); // UI矩形转换为图像矩形
-    QRect mapFromImageRect(const QRect& imageRect); // 图像矩形转换为UI矩形
-    QRect getScaledImageRect(); // 获取图像在控件中的实际显示区域
+    QPoint mapToImageCoordinates(const QPoint& labelPos);
+    QPoint mapFromImageCoordinates(const QPoint& imagePos);
+    QRect getScaledImageRect();
+    QRect mapToImageRect(const QRect& uiRect);
+    QRect mapFromImageRect(const QRect& imageRect);
+    void updateROIDisplay();
+    
+    // 新增：计算环形ROI区域
+    void calculateRingROI();
+    
+    // 新增：判断点是否在环形区域内
+    bool isPointInRingROI(const QPoint& point) const;
 
     // 缩放相关
     double m_zoomFactor = 1.0;
@@ -172,11 +198,20 @@ private:
     int m_circleRadius = 0;
     QPolygon m_arbitraryROI;
     
+    // 新增：多圆ROI相关变量
+    MultiCircleState m_multiCircleState = MultiCircleState::None;
+    QPoint m_secondCircleCenter;
+    int m_secondCircleRadius = 0;
+    
     // ROI选择状态 (图像像素坐标)
     QRect m_imageRectangleROI;     // 以图像像素为单位的矩形ROI
     QPoint m_imageCircleCenter;    // 以图像像素为单位的圆形ROI中心
     int m_imageCircleRadius = 0;   // 以图像像素为单位的圆形ROI半径
     QPolygon m_imageArbitraryROI;  // 以图像像素为单位的任意形状ROI
+    
+    // 新增：第二个圆和环形ROI（图像坐标）
+    QPoint m_imageSecondCircleCenter;  // 第二个圆的中心
+    int m_imageSecondCircleRadius = 0; // 第二个圆的半径
     
     // 控制鼠标响应的全局变量
     bool m_isROIMode = false; // false表示显示坐标模式，true表示ROI选择模式
@@ -199,8 +234,6 @@ private:
     // 图片相关
     ImageProcessor *imageProcessor;
     QImage m_currentImage;
-    // 移除不存在的类型
-    // ImageProcessorThread *m_processorThread;
 };
 
 #endif // PROCESSINGWIDGET_H

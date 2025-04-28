@@ -54,6 +54,8 @@ private slots:
     void onRectangleROISelected(const QRect& rect);
     void onCircleROISelected(const QPoint& center, int radius);
     void onArbitraryROISelected(const QPolygon& polygon);
+    void onRingROISelected(const QPoint& firstCenter, int firstRadius, 
+                          const QPoint& secondCenter, int secondRadius);
     void onApplyROI();
     void onRectangleROIButtonClicked();
 
@@ -68,6 +70,10 @@ private:
     // ROI统计计算函数
     void calculateROIStats(const QImage& image, const QRect& roi, double& mean, double& variance);
     void calculateCircleROIStats(const QImage& image, const QPoint& center, int radius, double& mean, double& variance);
+    void calculateRingROIStats(const QImage& image, 
+                              const QPoint& firstCenter, int firstRadius,
+                              const QPoint& secondCenter, int secondRadius,
+                              double& mean, double& variance, int& pixelCount);
 
     ProcessingWidget *m_processingWidget;
     ImageProcessor *imageProcessor;
