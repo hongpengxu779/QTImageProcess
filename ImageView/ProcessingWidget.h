@@ -51,6 +51,15 @@ enum class MultiCircleState {
     RingROI         // 已生成环形ROI
 };
 
+// 新增：圆形调整方向枚举
+enum class ResizeDirection {
+    None,
+    Top,
+    Right,
+    Bottom,
+    Left
+};
+
 class ProcessingWidget : public QWidget {
     Q_OBJECT
 public:
@@ -251,6 +260,17 @@ private:
     int m_currentCircle = 0;          // 当前操作的圆形索引
     QRect m_roiCircle1;               // 第一个圆形ROI
     QRect m_roiCircle2;               // 第二个圆形ROI
+    
+    // 控制点选中状态变量
+    bool m_handleSelected = false;    // 是否有控制点被选中
+    ResizeDirection m_selectedDirection = ResizeDirection::None; // 选中的控制点方向
+    int m_selectedCircleIndex = -1;   // 选中的圆索引(-1表示未选中,0表示第一个圆,1表示第二个圆)
+    
+    // 新增：用于调整圆形大小的变量
+    bool m_resizingCircle = false;    // 标记是否正在调整圆形大小
+    ResizeDirection m_resizeDirection = ResizeDirection::None; // 调整方向
+    int m_resizeCircleIndex = 0;      // 正在调整大小的圆形索引（0为第一个，1为第二个）
+    const int resizeHandleRadius = 6; // 调整大小控制点的半径
 
     // 中间
     QTabWidget    *tabWidget;
@@ -283,6 +303,9 @@ private:
 
     // 处理ROI移动
     void handleRoiMovement(const QPointF& imagePos);
+    
+    // 生成默认的保存文件名
+    QString generateDefaultFileName(const QString& suffix, bool isROI);
 };
 
 #endif // PROCESSINGWIDGET_H

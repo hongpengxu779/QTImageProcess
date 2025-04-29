@@ -78,7 +78,9 @@ public:
                    const QRect& imageRect, int imageWidth, int imageHeight,
                    const QRect& actualImageRect, int imageCircleRadius = 0,
                    const QPoint& secondCenter = QPoint(), int secondRadius = 0,
-                   int secondImageRadius = 0, MultiCircleState multiCircleState = MultiCircleState::None) {
+                   int secondImageRadius = 0, MultiCircleState multiCircleState = MultiCircleState::None,
+                   bool handleSelected = false, ResizeDirection selectedDirection = ResizeDirection::None,
+                   int selectedCircleIndex = -1) {
         m_rectangleROI = rect;
         m_circleCenter = center;
         m_circleRadius = radius;
@@ -95,6 +97,11 @@ public:
         m_secondCircleRadius = secondRadius;
         m_secondImageCircleRadius = secondImageRadius;
         m_multiCircleState = multiCircleState;
+        
+        // 添加这些行
+        m_handleSelected = handleSelected;
+        m_selectedDirection = selectedDirection;
+        m_selectedCircleIndex = selectedCircleIndex;
         
         // 计算宽高比例
         if (imageWidth > 0 && imageHeight > 0 && 
@@ -259,6 +266,61 @@ protected:
                     painter.drawLine(m_circleCenter.x(), m_circleCenter.y() - crossSize,
                                   m_circleCenter.x(), m_circleCenter.y() + crossSize);
                     
+                    // 添加四个调整大小的控制点
+                    int handleSize = 8;
+                    QPen handlePen;
+                    if (m_handleSelected && 
+                        m_selectedDirection == ResizeDirection::Top && 
+                        m_selectedCircleIndex == 0) {
+                        // 选中状态 - 红色边框
+                        handlePen = QPen(QColor(255, 0, 0));
+                        handlePen.setWidth(3);
+                        painter.setPen(handlePen);
+                        painter.setBrush(QBrush(QColor(255, 255, 0))); // 黄色填充
+                    } else {
+                        // 默认状态 - 青色边框
+                        handlePen = QPen(QColor(0, 255, 255));
+                        handlePen.setWidth(2);
+                        painter.setPen(handlePen);
+                        painter.setBrush(QBrush(QColor(255, 255, 255))); // 白色填充
+                    }
+                    
+                    // 确定控制点位置
+                    QPoint handlePos;
+                    switch (ResizeDirection::Top) {
+                        case ResizeDirection::Top:
+                            handlePos = QPoint(m_circleCenter.x(), m_circleCenter.y() - clippedRadius);
+                            break;
+                        case ResizeDirection::Right:
+                            handlePos = QPoint(m_circleCenter.x() + clippedRadius, m_circleCenter.y());
+                            break;
+                        case ResizeDirection::Bottom:
+                            handlePos = QPoint(m_circleCenter.x(), m_circleCenter.y() + clippedRadius);
+                            break;
+                        case ResizeDirection::Left:
+                            handlePos = QPoint(m_circleCenter.x() - clippedRadius, m_circleCenter.y());
+                            break;
+                    }
+                    
+                    // 绘制控制点
+                    if (m_actualImageRect.contains(handlePos))
+                        painter.drawEllipse(handlePos, handleSize/2, handleSize/2);
+                    
+                    // 右控制点
+                    QPoint rightHandle(m_circleCenter.x() + clippedRadius, m_circleCenter.y());
+                    if (m_actualImageRect.contains(rightHandle))
+                        painter.drawEllipse(rightHandle, handleSize/2, handleSize/2);
+                    
+                    // 下控制点
+                    QPoint bottomHandle(m_circleCenter.x(), m_circleCenter.y() + clippedRadius);
+                    if (m_actualImageRect.contains(bottomHandle))
+                        painter.drawEllipse(bottomHandle, handleSize/2, handleSize/2);
+                    
+                    // 左控制点
+                    QPoint leftHandle(m_circleCenter.x() - clippedRadius, m_circleCenter.y());
+                    if (m_actualImageRect.contains(leftHandle))
+                        painter.drawEllipse(leftHandle, handleSize/2, handleSize/2);
+                    
                     // 显示圆形ROI信息
                     QFont font = painter.font();
                     font.setPointSize(9);
@@ -339,6 +401,61 @@ protected:
                                   m_secondCircleCenter.x() + crossSize, m_secondCircleCenter.y());
                     painter.drawLine(m_secondCircleCenter.x(), m_secondCircleCenter.y() - crossSize,
                                   m_secondCircleCenter.x(), m_secondCircleCenter.y() + crossSize);
+                    
+                    // 添加四个调整大小的控制点
+                    int handleSize = 8;
+                    QPen handlePen;
+                    if (m_handleSelected && 
+                        m_selectedDirection == ResizeDirection::Top && 
+                        m_selectedCircleIndex == 0) {
+                        // 选中状态 - 红色边框
+                        handlePen = QPen(QColor(255, 0, 0));
+                        handlePen.setWidth(3);
+                        painter.setPen(handlePen);
+                        painter.setBrush(QBrush(QColor(255, 255, 0))); // 黄色填充
+                    } else {
+                        // 默认状态 - 青色边框
+                        handlePen = QPen(QColor(0, 255, 255));
+                        handlePen.setWidth(2);
+                        painter.setPen(handlePen);
+                        painter.setBrush(QBrush(QColor(255, 255, 255))); // 白色填充
+                    }
+                    
+                    // 确定控制点位置
+                    QPoint handlePos;
+                    switch (ResizeDirection::Top) {
+                        case ResizeDirection::Top:
+                            handlePos = QPoint(m_secondCircleCenter.x(), m_secondCircleCenter.y() - clippedRadius);
+                            break;
+                        case ResizeDirection::Right:
+                            handlePos = QPoint(m_secondCircleCenter.x() + clippedRadius, m_secondCircleCenter.y());
+                            break;
+                        case ResizeDirection::Bottom:
+                            handlePos = QPoint(m_secondCircleCenter.x(), m_secondCircleCenter.y() + clippedRadius);
+                            break;
+                        case ResizeDirection::Left:
+                            handlePos = QPoint(m_secondCircleCenter.x() - clippedRadius, m_secondCircleCenter.y());
+                            break;
+                    }
+                    
+                    // 绘制控制点
+                    if (m_actualImageRect.contains(handlePos))
+                        painter.drawEllipse(handlePos, handleSize/2, handleSize/2);
+                    
+                    // 右控制点
+                    QPoint rightHandle(m_secondCircleCenter.x() + clippedRadius, m_secondCircleCenter.y());
+                    if (m_actualImageRect.contains(rightHandle))
+                        painter.drawEllipse(rightHandle, handleSize/2, handleSize/2);
+                    
+                    // 下控制点
+                    QPoint bottomHandle(m_secondCircleCenter.x(), m_secondCircleCenter.y() + clippedRadius);
+                    if (m_actualImageRect.contains(bottomHandle))
+                        painter.drawEllipse(bottomHandle, handleSize/2, handleSize/2);
+                    
+                    // 左控制点
+                    QPoint leftHandle(m_secondCircleCenter.x() - clippedRadius, m_secondCircleCenter.y());
+                    if (m_actualImageRect.contains(leftHandle))
+                        painter.drawEllipse(leftHandle, handleSize/2, handleSize/2);
                     
                     // 显示圆形ROI信息
                     QFont font = painter.font();
@@ -485,7 +602,21 @@ private:
     int m_secondCircleRadius = 0;
     int m_secondImageCircleRadius = 0;
     MultiCircleState m_multiCircleState = MultiCircleState::None;
+    
+    // 在ROIOverlay类的private部分添加以下变量
+    bool m_handleSelected = false;
+    ResizeDirection m_selectedDirection = ResizeDirection::None;
+    int m_selectedCircleIndex = -1; // -1表示没有选中, 0表示第一个圆, 1表示第二个圆
 };
+
+// 定义调整圆形的方向枚举
+// enum class ResizeDirection {
+//     None,
+//     Top,
+//     Right,
+//     Bottom,
+//     Left
+// };
 
 ProcessingWidget::ProcessingWidget(QWidget *parent)
     : QWidget(parent)
@@ -541,6 +672,8 @@ ProcessingWidget::ProcessingWidget(QWidget *parent)
     , btnNextImage(nullptr)
     , m_currentImageIndex(-1)
     , m_lastSaveFolder(QDir::currentPath()) // Initialize with current path
+    , m_resizingCircle(false)
+    , m_resizeDirection(ResizeDirection::None)
 {
     try {
         qDebug() << "Initializing ProcessingWidget...";
@@ -985,10 +1118,13 @@ void ProcessingWidget::setupROISelectionControls()
         
         // 连接应用ROI按钮信号
         connect(btnApplyROI, &QPushButton::clicked, this, [this]() {
+            bool roiApplied = false;
+            
             switch (m_currentROIMode) {
                 case ROISelectionMode::Rectangle:
                     if (!m_rectangleROI.isNull()) {
                         emit roiSelected(m_imageRectangleROI);
+                        roiApplied = true;
                     }
                     break;
                 case ROISelectionMode::Circle:
@@ -997,30 +1133,87 @@ void ProcessingWidget::setupROISelectionControls()
                         // 如果是环形ROI，发送环形ROI信号
                         emit ringROISelected(m_imageCircleCenter, m_imageCircleRadius,
                                            m_imageSecondCircleCenter, m_imageSecondCircleRadius);
+                        roiApplied = true;
                     }
                     else if (m_multiCircleState == MultiCircleState::SecondCircle) {
                         // 如果已选择第二个圆但尚未计算环形，计算并发送环形ROI
                         calculateRingROI();
                         emit ringROISelected(m_imageCircleCenter, m_imageCircleRadius,
                                            m_imageSecondCircleCenter, m_imageSecondCircleRadius);
+                        roiApplied = true;
                     }
                     else if (m_multiCircleState == MultiCircleState::FirstCircle) {
                         // 如果只有第一个圆，提示用户选择第二个圆
                         qDebug() << "已选择第一个圆，请继续选择第二个圆以创建环形ROI";
-                        // 也可以显示一个消息框提示用户
+                        QMessageBox::information(this, tr("需要第二个圆"), tr("已选择第一个圆，请继续选择第二个圆以创建环形ROI"));
                     }
                     else if (m_circleRadius > 0) {
                         // 兼容单圆模式
                         emit roiSelected(m_imageCircleCenter, m_imageCircleRadius);
+                        roiApplied = true;
                     }
                     break;
                 case ROISelectionMode::Arbitrary:
                     if (m_arbitraryPoints.size() > 2) {
                         emit roiSelected(QPolygon(m_imageArbitraryROI));
+                        roiApplied = true;
                     }
                     break;
                 default:
                     break;
+            }
+            
+            // 如果成功应用了ROI，则自动保存结果
+            if (roiApplied) {
+                // 检查是否有有效图像
+                if (m_currentImage.isNull()) {
+                    QMessageBox::warning(this, tr("无法保存"), tr("没有可保存的图像。"));
+                    return;
+                }
+                
+                // 使用统一的文件名生成函数
+                QString defaultFileName = generateDefaultFileName("", true); // ROI处理，使用原始后缀
+                
+                // 获取当前图像所在目录
+                QString currentFileDir = m_lastSaveFolder;
+                if (m_currentImageIndex >= 0 && m_currentImageIndex < m_imageFiles.size()) {
+                    QFileInfo fileInfo(m_imageFiles[m_currentImageIndex]);
+                    // 使用原图片所在文件夹
+                    if (QDir(m_lastSaveFolder) == QDir(QDir::currentPath())) {
+                        currentFileDir = fileInfo.absolutePath();
+                    }
+                }
+                
+                // 构建完整路径
+                QString initialPath = QDir(currentFileDir).filePath(defaultFileName);
+                qDebug() << "完整的初始保存路径:" << initialPath;
+                
+                // 打开保存对话框
+                QString saveFilePath = QFileDialog::getSaveFileName(
+                    this,
+                    tr("保存ROI处理后的图像"),
+                    initialPath,
+                    tr("PNG (*.png);;JPEG (*.jpg *.jpeg);;Bitmap (*.bmp)")
+                );
+                
+                if (!saveFilePath.isEmpty()) {
+                    // 确保文件有有效扩展名
+                    QFileInfo fi(saveFilePath);
+                    QString suffix = fi.suffix().toLower();
+                    
+                    if (suffix.isEmpty() || !QStringList({"png", "jpg", "jpeg", "bmp"}).contains(suffix)) {
+                        saveFilePath += ".png";
+                        qWarning() << "添加默认.png后缀:" << saveFilePath;
+                    }
+                    
+                    if (m_currentImage.save(saveFilePath)) {
+                        QMessageBox::information(this, tr("保存成功"), tr("ROI处理后的图像已保存至: %1").arg(saveFilePath));
+                        // 更新最后使用的目录
+                        m_lastSaveFolder = QFileInfo(saveFilePath).absolutePath();
+                    } else {
+                        QMessageBox::critical(this, tr("保存失败"), tr("无法将图像保存至: %1").arg(saveFilePath));
+                    }
+                }
             }
         });
         
@@ -1819,7 +2012,8 @@ void ProcessingWidget::updateROIDisplay()
                                m_currentImage.width(), m_currentImage.height(),
                                actualImageRect, m_imageCircleRadius,
                                m_secondCircleCenter, m_secondCircleRadius,
-                               m_imageSecondCircleRadius, m_multiCircleState);
+                               m_imageSecondCircleRadius, m_multiCircleState,
+                               m_handleSelected, m_selectedDirection, m_selectedCircleIndex);
         
         m_roiOverlay->update();
     }
@@ -2010,8 +2204,18 @@ void ProcessingWidget::onSelectFolderClicked()
                 m_imageFiles.append(directory.filePath(file));
             }
             
+            // 输出找到的图像文件列表（限制日志长度，只显示前5个）
+            qDebug() << "图像文件列表:";
+            for (int i = 0; i < qMin(5, m_imageFiles.size()); ++i) {
+                qDebug() << "  " << i << ":" << m_imageFiles[i];
+            }
+            if (m_imageFiles.size() > 5) {
+                qDebug() << "  ...及其他" << (m_imageFiles.size() - 5) << "个文件";
+            }
+            
             qDebug() << "准备加载第一张图像:" << m_imageFiles.first();
             m_currentImageIndex = 0;
+            qDebug() << "设置当前图像索引:" << m_currentImageIndex;
             
             // 使用增强版的displayImageAtIndex加载第一张图像
             displayImageAtIndex(m_currentImageIndex);
@@ -2042,6 +2246,8 @@ void ProcessingWidget::displayImageAtIndex(int index)
             return;
         }
 
+        // 更新当前图像索引
+        m_currentImageIndex = index;
         QString imagePath = m_imageFiles.at(index);
         qDebug() << "加载图像文件:" << imagePath << "索引:" << index << "/" << (m_imageFiles.size()-1);
         
@@ -2116,10 +2322,12 @@ void ProcessingWidget::onPrevImageClicked()
 {
     if (m_imageFiles.size() <= 1) return; // Nothing to navigate
 
+    int previousIndex = m_currentImageIndex;
     m_currentImageIndex--;
     if (m_currentImageIndex < 0) {
         m_currentImageIndex = m_imageFiles.size() - 1; // Wrap around to the end
     }
+    qDebug() << "导航到前一张图像: 从索引" << previousIndex << "到" << m_currentImageIndex;
     displayImageAtIndex(m_currentImageIndex);
 }
 
@@ -2127,10 +2335,12 @@ void ProcessingWidget::onNextImageClicked()
 {
     if (m_imageFiles.size() <= 1) return; // Nothing to navigate
 
+    int previousIndex = m_currentImageIndex;
     m_currentImageIndex++;
     if (m_currentImageIndex >= m_imageFiles.size()) {
         m_currentImageIndex = 0; // Wrap around to the beginning
     }
+    qDebug() << "导航到下一张图像: 从索引" << previousIndex << "到" << m_currentImageIndex;
     displayImageAtIndex(m_currentImageIndex);
 }
 
@@ -2153,28 +2363,17 @@ void ProcessingWidget::onSaveClicked()
         return;
     }
 
-    QString defaultFileName;
+    QString defaultFileName = generateDefaultFileName("", false); // 普通保存，使用原始后缀
     QString currentFileDir = m_lastSaveFolder; // Default to last saved/opened folder
 
-    // Try to get filename and directory from the currently loaded file
+    // Try to get directory from the currently loaded file
     if (m_currentImageIndex >= 0 && m_currentImageIndex < m_imageFiles.size()) {
         QFileInfo fileInfo(m_imageFiles[m_currentImageIndex]);
-        QString baseName = fileInfo.completeBaseName();
-        QString suffix = fileInfo.suffix();
-
-        // Suggest a modified name like "original_processed.png"
-        defaultFileName = baseName + "_processed." + suffix;
+        
         // Use the directory of the current file if m_lastSaveFolder hasn't been set otherwise yet
         if (QDir(m_lastSaveFolder) == QDir(QDir::currentPath())) { // Check if still default
              currentFileDir = fileInfo.absolutePath();
         }
-
-        // Ensure suggested suffix is valid for saving, default to png otherwise
-        if (!QImageWriter::supportedImageFormats().contains(suffix.toUtf8()) || suffix.isEmpty()) {
-             defaultFileName = baseName + "_processed.png";
-        }
-    } else {
-        defaultFileName = "processed_image.png"; // Fallback if no file source known
     }
 
     // Construct the initial path for the dialog
@@ -2227,6 +2426,15 @@ void ProcessingWidget::onSelectClicked()
             m_imageFiles.clear();
             m_imageFiles.append(filePath);
             m_currentImageIndex = 0;
+
+            // 记录图像文件信息到日志
+            qDebug() << "已选择单个图像 - 路径:" << filePath
+                     << "图像列表大小:" << m_imageFiles.size()
+                     << "当前索引:" << m_currentImageIndex;
+            QFileInfo fileInfo(filePath);
+            qDebug() << "图像文件信息 - 名称:" << fileInfo.fileName()
+                     << "基本名称:" << fileInfo.completeBaseName()
+                     << "后缀:" << fileInfo.suffix();
 
             displayImage(newImage);
             // Update the last used folder based on this selection
@@ -2608,6 +2816,60 @@ void ProcessingWidget::updateGammaValueLabel(int value)
     
     // Update the label
     lblGammaValue->setText(QString("γ = %1").arg(gamma, 0, 'f', 2));
+}
+
+// 添加一个新的成员函数，在ProcessingWidget.h中也需要声明
+QString ProcessingWidget::generateDefaultFileName(const QString& suffix, bool isROI)
+{
+    QString defaultFileName;
+    
+    // 检查是否有当前加载的图像
+    if (m_currentImageIndex >= 0 && m_currentImageIndex < m_imageFiles.size()) {
+        QFileInfo fileInfo(m_imageFiles[m_currentImageIndex]);
+        QString baseName = fileInfo.completeBaseName();
+        QString fileSuffix = fileInfo.suffix();
+        
+        // 如果是ROI处理，添加ROI类型标识
+        if (isROI) {
+            QString roiTypeStr;
+            switch (m_currentROIMode) {
+                case ROISelectionMode::Rectangle:
+                    roiTypeStr = "_rect";
+                    break;
+                case ROISelectionMode::Circle:
+                    if (m_multiCircleState == MultiCircleState::RingROI)
+                        roiTypeStr = "_ring";
+                    else
+                        roiTypeStr = "_circle";
+                    break;
+                case ROISelectionMode::Arbitrary:
+                    roiTypeStr = "_poly";
+                    break;
+                default:
+                    roiTypeStr = "_roi";
+                    break;
+            }
+            defaultFileName = baseName + roiTypeStr;
+        } else {
+            // 普通处理
+            defaultFileName = baseName + "_processed";
+        }
+        
+        // 使用指定的后缀或原始文件后缀
+        if (!suffix.isEmpty()) {
+            defaultFileName += "." + suffix;
+        } else if (!fileSuffix.isEmpty() && QImageWriter::supportedImageFormats().contains(fileSuffix.toUtf8())) {
+            defaultFileName += "." + fileSuffix;
+        } else {
+            defaultFileName += ".png"; // 默认使用PNG
+        }
+    } else {
+        // 无当前图像时的默认文件名
+        defaultFileName = isROI ? "processed_roi.png" : "processed_image.png";
+    }
+    
+    qDebug() << "生成的默认文件名:" << defaultFileName << (isROI ? "(ROI处理)" : "(普通处理)");
+    return defaultFileName;
 }
 
 
