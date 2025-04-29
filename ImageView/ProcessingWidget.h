@@ -8,6 +8,13 @@
 #include <QSpinBox>
 #include <QApplication>
 #include "../ImageProcessor/ImageProcessor.h"
+#include <QPoint>
+#include <QVector>
+#include <QPolygon>
+#include <QStringList>
+#include <QFileDialog>
+#include <QDir>
+#include <QImageReader>
 // 注释掉不存在的头文件
 // #include "ImageProcessorThread.h"
 
@@ -39,6 +46,7 @@ enum class ROISelectionMode {
 enum class MultiCircleState {
     None,           // 未开始选择
     FirstCircle,    // 已选择第一个圆
+    FirstCircleCompleted, // 第一个圆选择完成
     SecondCircle,   // 已选择第二个圆
     RingROI         // 已生成环形ROI
 };
@@ -80,6 +88,9 @@ public:
     // 显示图片
     void displayImage(const QImage &image);
     
+    // 获取当前显示的图像
+    QImage getCurrentImage() const { return m_currentImage; }
+    
     // 重置标签显示
     void resetValueLabels();
     
@@ -105,13 +116,16 @@ public:
 
 signals:
     void mouseClicked(const QPoint& pos, int grayValue, int r, int g, int b);
-    void mouseMoved(const QPoint& pos, int grayValue);
+    void mouseMoved(const QPoint& pos, int grayValue, int r, int g, int b);
     void imageStatsUpdated(double meanValue);
     void showHistogramRequested(bool show); // Signal to show histogram dialog
     void kernelSizeChanged(int size); // Signal for kernel size change
     void roiSelected(const QRect& rect); // Signal for rectangle ROI
     void roiSelected(const QPoint& center, int radius); // Signal for circle ROI
     void roiSelected(const QPolygon& polygon); // Signal for arbitrary ROI
+    
+    // 新增：图像变化信号
+    void imageChanged(const QImage& image);
     
     // 新增：环形ROI选择完成信号
     void ringROISelected(const QPoint& firstCenter, int firstRadius, 
@@ -133,6 +147,11 @@ private slots:
     void updateGammaValueLabel(int value);
     void onROISelectionModeChanged(int id);
     void clearROISelection();
+    void onSelectFolderClicked();
+    void onPrevImageClicked();
+    void onNextImageClicked();
+    void onSelectClicked();
+    void onSaveClicked();
 
 private:
     void setupUi();
@@ -153,6 +172,10 @@ private:
     
     // 新增：判断点是否在环形区域内
     bool isPointInRingROI(const QPoint& point) const;
+
+    // Add these helper function declarations:
+    void displayImageAtIndex(int index);
+    void updateNavigationButtonsState();
 
     // 缩放相关
     double m_zoomFactor = 1.0;
@@ -221,6 +244,13 @@ private:
     int m_movingCircleIndex = -1; // 标记正在移动的圆 (0 for first, 1 for second)
     QPoint m_moveStartPos;           // 移动开始时的鼠标位置 (相对于 imageLabel)
     const int circleCenterHandleRadius = 8; // 圆心可点击区域的半径
+    
+    // 用于鼠标事件ROI操作
+    bool m_selectingRoi = false;      // 标记是否正在选择ROI
+    bool m_movingCircle = false;      // 标记是否正在移动圆形
+    int m_currentCircle = 0;          // 当前操作的圆形索引
+    QRect m_roiCircle1;               // 第一个圆形ROI
+    QRect m_roiCircle2;               // 第二个圆形ROI
 
     // 中间
     QTabWidget    *tabWidget;
@@ -240,6 +270,19 @@ private:
     // 图片相关
     ImageProcessor *imageProcessor;
     QImage m_currentImage;
+
+    // Add these member variables:
+    QPushButton* btnPrevImage = nullptr;
+    QPushButton* btnNextImage = nullptr;
+    QStringList m_imageFiles;
+    int m_currentImageIndex = -1; // -1 indicates no folder loaded
+    QString m_lastSaveFolder;
+
+    // 新增：计算UI和图像坐标转换
+    int calculateImageDistance(int uiDistance);
+
+    // 处理ROI移动
+    void handleRoiMovement(const QPointF& imagePos);
 };
 
 #endif // PROCESSINGWIDGET_H

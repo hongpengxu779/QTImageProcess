@@ -30,6 +30,7 @@ private:
     QWaitCondition m_condition;
     bool m_stop;
     bool m_imageUpdated;
+    QString m_lastSaveFolder;
 
     void processImage();
     void calculateImageStats();

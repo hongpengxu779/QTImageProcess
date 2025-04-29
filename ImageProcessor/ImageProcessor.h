@@ -16,6 +16,7 @@ public:
     bool loadImage(const QString &filePath);
     const QImage& getOriginalImage() const;
     const QImage& getProcessedImage() const;
+    void setProcessedImage(const QImage &image);
     void resetToOriginal();
 
     // 设置滤波器参数

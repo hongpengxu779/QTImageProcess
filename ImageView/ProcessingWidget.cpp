@@ -18,9 +18,50 @@
 #include <QToolButton>
 #include <QIcon>
 #include <QMessageBox>
+#include <QFileDialog>
+#include <QDir>
+#include <QImageReader>
+#include <QFileInfo>
+#include <QImageWriter> // Added for save format checking
 
 // 辅助函数声明
 void logRectInfo(const QString& prefix, const QRect& rect);
+
+// 新增：辅助函数，将QImage::Format转换为可读的字符串
+QString getQImageFormatName(QImage::Format format) {
+    switch (format) {
+        case QImage::Format_Invalid: return "Invalid";
+        case QImage::Format_Mono: return "Mono";
+        case QImage::Format_MonoLSB: return "MonoLSB";
+        case QImage::Format_Indexed8: return "Indexed8";
+        case QImage::Format_RGB32: return "RGB32";
+        case QImage::Format_ARGB32: return "ARGB32";
+        case QImage::Format_ARGB32_Premultiplied: return "ARGB32_Premultiplied";
+        case QImage::Format_RGB16: return "RGB16";
+        case QImage::Format_ARGB8565_Premultiplied: return "ARGB8565_Premultiplied";
+        case QImage::Format_RGB666: return "RGB666";
+        case QImage::Format_ARGB6666_Premultiplied: return "ARGB6666_Premultiplied";
+        case QImage::Format_RGB555: return "RGB555";
+        case QImage::Format_ARGB8555_Premultiplied: return "ARGB8555_Premultiplied";
+        case QImage::Format_RGB888: return "RGB888";
+        case QImage::Format_RGB444: return "RGB444";
+        case QImage::Format_ARGB4444_Premultiplied: return "ARGB4444_Premultiplied";
+        case QImage::Format_RGBX8888: return "RGBX8888";
+        case QImage::Format_RGBA8888: return "RGBA8888";
+        case QImage::Format_RGBA8888_Premultiplied: return "RGBA8888_Premultiplied";
+        case QImage::Format_BGR30: return "BGR30";
+        case QImage::Format_A2BGR30_Premultiplied: return "A2BGR30_Premultiplied";
+        case QImage::Format_RGB30: return "RGB30";
+        case QImage::Format_A2RGB30_Premultiplied: return "A2RGB30_Premultiplied";
+        case QImage::Format_Alpha8: return "Alpha8";
+        case QImage::Format_Grayscale8: return "Grayscale8";
+        case QImage::Format_Grayscale16: return "Grayscale16";
+        case QImage::Format_RGBX64: return "RGBX64";
+        case QImage::Format_RGBA64: return "RGBA64";
+        case QImage::Format_RGBA64_Premultiplied: return "RGBA64_Premultiplied";
+        default: return "Unknown";
+    }
+}
 
 // 创建一个透明的覆盖层来绘制ROI
 class ROIOverlay : public QWidget {
@@ -496,6 +537,10 @@ ProcessingWidget::ProcessingWidget(QWidget *parent)
     , m_imageCircleRadius(0)
     , m_imageArbitraryROI()
     , m_roiOverlay(nullptr)
+    , btnPrevImage(nullptr)
+    , btnNextImage(nullptr)
+    , m_currentImageIndex(-1)
+    , m_lastSaveFolder(QDir::currentPath()) // Initialize with current path
 {
     try {
         qDebug() << "Initializing ProcessingWidget...";
@@ -653,10 +698,27 @@ void ProcessingWidget::setupUi()
         auto *vCenter = new QVBoxLayout(centerW);
         imageLabel = new QLabel;
         imageLabel->setAlignment(Qt::AlignCenter);
-        imageLabel->setMinimumSize(600, 500);
+        imageLabel->setMinimumSize(600, 900); // Increased height from 500 to 700
         imageLabel->setStyleSheet("QLabel { background-color : white; border: 1px solid gray; }");
         imageLabel->setMouseTracking(true);
-        vCenter->addWidget(imageLabel);
+
+        // --- Add Navigation Buttons ---
+        btnPrevImage = new QPushButton("<");
+        btnNextImage = new QPushButton(">");
+        btnPrevImage->setFixedSize(30, 60); // Adjust size as needed
+        btnNextImage->setFixedSize(30, 60); // Adjust size as needed
+        btnPrevImage->setToolTip(tr("上一张图片"));
+        btnNextImage->setToolTip(tr("下一张图片"));
+
+        auto *imageLayout = new QHBoxLayout(); // Layout for buttons and image
+        imageLayout->addWidget(btnPrevImage);
+        imageLayout->addWidget(imageLabel, 1); // Give image label stretch factor
+        imageLayout->addWidget(btnNextImage);
+        vCenter->addLayout(imageLayout); // Add this layout instead of just imageLabel
+
+        // Initially disable navigation buttons
+        updateNavigationButtonsState();
+        // --- End Navigation Buttons ---
 
         // 右侧布局
         QWidget *rightW = new QWidget;
@@ -823,6 +885,18 @@ void ProcessingWidget::setupUi()
         updateBValueLabel(sliderOffset->value());
         updateGammaValueLabel(sliderGamma->value());
 
+        // --- Connect Folder Selection and Navigation Signals ---
+        connect(btnSelectFolder, &QPushButton::clicked, this, &ProcessingWidget::onSelectFolderClicked);
+        connect(btnPrevImage, &QPushButton::clicked, this, &ProcessingWidget::onPrevImageClicked);
+        connect(btnNextImage, &QPushButton::clicked, this, &ProcessingWidget::onNextImageClicked);
+        // --- End Signal Connections ---
+
+        // --- Connect Select and Save Buttons ---
+        // 注释掉这一行，防止重复触发，让MainWindow处理选择图像事件
+        // connect(btnSelect, &QPushButton::clicked, this, &ProcessingWidget::onSelectClicked);
+        connect(btnSave, &QPushButton::clicked, this, &ProcessingWidget::onSaveClicked);
+        // --- End Select and Save Buttons ---
+
         hMain->addWidget(leftW);
         hMain->addWidget(centerW, 1);
         hMain->addWidget(rightW);
@@ -965,6 +1039,10 @@ void ProcessingWidget::setupROISelectionControls()
 
 void ProcessingWidget::displayImage(const QImage &image)
 {
+    static bool isProcessing = false;
+    if (isProcessing) return;
+    isProcessing = true;
+    
     try {
         if (image.isNull()) {
             qDebug() << "Warning: Attempted to display null image";
@@ -976,30 +1054,107 @@ void ProcessingWidget::displayImage(const QImage &image)
             return;
         }
 
-        m_currentImage = image;
+        // 记录源图像信息
+        qDebug() << "源图像信息 - 大小:" << image.size() 
+                << "格式:" << image.format() 
+                << "(" << getQImageFormatName(image.format()) << ")"
+                << "深度:" << image.depth() << "位"
+                << "是否空:" << image.isNull();
 
-        QPixmap pixmap = QPixmap::fromImage(image);
-        if (pixmap.isNull()) {
-            qDebug() << "Error: Failed to create pixmap from image";
+        // 创建一个安全的深拷贝
+        QImage safeImage;
+        try {
+            safeImage = image.copy();
+            
+            // 对于索引色图像，转换为RGB32格式以确保安全
+            if (safeImage.format() == QImage::Format_Indexed8 || 
+                safeImage.format() == QImage::Format_Mono ||
+                safeImage.format() == QImage::Format_MonoLSB) {
+                qDebug() << "将索引色或单色图像转换为RGB32格式";
+                safeImage = safeImage.convertToFormat(QImage::Format_RGB32);
+            }
+            
+            qDebug() << "创建安全拷贝 - 大小:" << safeImage.size() 
+                    << "格式:" << safeImage.format() 
+                    << "(" << getQImageFormatName(safeImage.format()) << ")";
+        }
+        catch (const std::exception& e) {
+            qDebug() << "创建图像拷贝时出错:" << e.what();
+            return;
+        }
+        catch (...) {
+            qDebug() << "创建图像拷贝时出现未知错误";
             return;
         }
 
-        qDebug() << "Scaling pixmap to label size:" << imageLabel->size();
-        pixmap = pixmap.scaled(imageLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        // 设置当前图像
+        m_currentImage = safeImage;
+        
+        // 发射图像变化信号
+        emit imageChanged(m_currentImage);
 
-        if (pixmap.isNull()) {
-            qDebug() << "Error: Failed to scale pixmap";
+        // 创建QPixmap并缩放
+        QPixmap pixmap;
+        try {
+            pixmap = QPixmap::fromImage(safeImage);
+            if (pixmap.isNull()) {
+                qDebug() << "Error: Failed to create pixmap from image";
+                return;
+            }
+
+            qDebug() << "Scaling pixmap to label size:" << imageLabel->size();
+            pixmap = pixmap.scaled(imageLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+
+            if (pixmap.isNull()) {
+                qDebug() << "Error: Failed to scale pixmap";
+                return;
+            }
+        }
+        catch (const std::exception& e) {
+            qDebug() << "创建或缩放QPixmap时出错:" << e.what();
+            return;
+        }
+        catch (...) {
+            qDebug() << "创建或缩放QPixmap时出现未知错误";
             return;
         }
 
-        imageLabel->setPixmap(pixmap);
-        qDebug() << "Image display updated successfully";
+        // 设置到标签
+        try {
+            imageLabel->setPixmap(pixmap);
+        }
+        catch (const std::exception& e) {
+            qDebug() << "设置QPixmap到标签时出错:" << e.what();
+            return;
+        }
+        catch (...) {
+            qDebug() << "设置QPixmap到标签时出现未知错误";
+            return;
+        }
+
+        qDebug() << "图像显示成功完成";
 
         // 触发图像统计信息更新
-        emit imageStatsUpdated(calculateMeanValue(image));
+        try {
+            emit imageStatsUpdated(calculateMeanValue(m_currentImage));
+        }
+        catch (const std::exception& e) {
+            qDebug() << "计算图像统计信息时出错:" << e.what();
+        }
+        catch (...) {
+            qDebug() << "计算图像统计信息时出现未知错误";
+        }
+        
+        // 更新ROI显示
+        updateROIDisplay();
     } catch (const std::exception& e) {
         qDebug() << "Error displaying image:" << e.what();
     }
+    catch (...) {
+        qDebug() << "Unknown error during image display";
+    }
+    
+    isProcessing = false;
 }
 
 // 添加一个辅助函数来计算图像的均值
@@ -1165,601 +1320,90 @@ void ProcessingWidget::clearROISelection()
 void ProcessingWidget::mousePressEvent(QMouseEvent *event)
 {
     try {
-        // 如果没有图像，不处理
+        // 确保图像已加载且imageLabel存在
         if (m_currentImage.isNull() || !imageLabel) {
             return;
         }
+
+        // 获取鼠标位置相对于图像标签的坐标
+        QPoint pos = imageLabel->mapFrom(this, event->pos());
         
-        // 获取图像在标签中的实际显示区域
-        QRect actualImageRect = getScaledImageRect();
-        
-        // 获取鼠标位置相对于imageLabel的坐标
-        QPoint labelPos = imageLabel->mapFrom(this, event->position().toPoint());
-        
-        // 检查鼠标是否在imageLabel区域内
-        if (!imageLabel->rect().contains(labelPos)) {
-            return;
-        }
-        
-        // 检查点击是否在实际图像区域内 (除非是准备移动ROI)
-        if (!actualImageRect.contains(labelPos) && m_currentROIMode != ROISelectionMode::Circle) {
-            qDebug() << "鼠标点击在图像显示区域外，忽略";
+        // 检查鼠标是否在图像标签范围内
+        if (!imageLabel->rect().contains(pos)) {
             return;
         }
 
-        // --- 新增：检测是否开始移动已选定的圆 --- 
-        if (event->button() == Qt::LeftButton && m_currentROIMode == ROISelectionMode::Circle && 
-            m_multiCircleState >= MultiCircleState::SecondCircle && !m_selectionInProgress) {
-            
-            // 检查是否点击在第一个圆心附近
-            if (m_circleRadius > 0) {
-                int dx1 = labelPos.x() - m_circleCenter.x();
-                int dy1 = labelPos.y() - m_circleCenter.y();
-                if (dx1*dx1 + dy1*dy1 <= circleCenterHandleRadius * circleCenterHandleRadius) {
-                    m_isMovingROI = true;
-                    m_movingCircleIndex = 0;
-                    m_moveStartPos = labelPos;
-                    setCursor(Qt::ClosedHandCursor);
+        // 转换为图像坐标
+        QPoint imagePos = mapToImageCoordinates(pos);
+        
+        qDebug() << "鼠标按下，图像坐标:" << imagePos;
+
+        // 处理左键点击
+        if (event->button() == Qt::LeftButton) {
+            // 首先检查是否是在已完成的环形ROI上点击
+            if (m_multiCircleState == MultiCircleState::RingROI) {
+                // 计算点到第一个圆心的距离
+                double dx1 = imagePos.x() - m_imageCircleCenter.x();
+                double dy1 = imagePos.y() - m_imageCircleCenter.y();
+                double dist1 = sqrt(dx1*dx1 + dy1*dy1);
+                
+                // 如果点击在第一个圆内，移动第一个圆
+                if (dist1 <= m_imageCircleRadius) {
+                    m_movingCircle = true;
+                    m_currentCircle = 1;
+                    setCursor(Qt::SizeAllCursor);
                     qDebug() << "开始移动第一个圆";
-                    return; // 开始移动，不进行后续选择操作
+                    return;
                 }
-            }
-            
-            // 检查是否点击在第二个圆心附近
-            if (m_secondCircleRadius > 0) {
-                int dx2 = labelPos.x() - m_secondCircleCenter.x();
-                int dy2 = labelPos.y() - m_secondCircleCenter.y();
-                if (dx2*dx2 + dy2*dy2 <= circleCenterHandleRadius * circleCenterHandleRadius) {
-                    m_isMovingROI = true;
-                    m_movingCircleIndex = 1;
-                    m_moveStartPos = labelPos;
-                    setCursor(Qt::ClosedHandCursor);
+                
+                // 检查点是否在环形区域内（两个圆的对称差）
+                if (isPointInRingROI(imagePos)) {
+                    m_movingCircle = true;
+                    m_currentCircle = 2;
+                    setCursor(Qt::SizeAllCursor);
                     qDebug() << "开始移动第二个圆";
-                    return; // 开始移动，不进行后续选择操作
-                }
-            }
-        }
-        // --- 移动检测结束 ---
-        
-        // 后续处理逻辑 (选择ROI或显示像素信息)
-        if (m_currentROIMode == ROISelectionMode::None) {
-            // 常规模式 - 显示像素信息
-            if (event->button() == Qt::LeftButton) {
-                // 将UI坐标映射到图像坐标
-                QPoint imagePos = mapToImageCoordinates(labelPos);
-
-                // 检查坐标是否有效
-                if (imagePos.x() >= 0 && imagePos.y() >= 0) {
-                    // 获取像素信息
-                    QColor pixelColor = m_currentImage.pixelColor(imagePos);
-                    int r = pixelColor.red();
-                    int g = pixelColor.green();
-                    int b = pixelColor.blue();
-                    int grayValue = qGray(r, g, b);
-
-                    // 发送信号
-                    emit mouseClicked(imagePos, grayValue, r, g, b);
-                }
-            }
-        } else {
-            // ROI选择模式
-            if (event->button() == Qt::LeftButton) {
-                // 记录起始点(相对于imageLabel的坐标)
-                m_selectionStart = labelPos;
-                m_selectionCurrent = labelPos;
-                m_selectionInProgress = true;
-                
-                switch (m_currentROIMode) {
-                    case ROISelectionMode::Rectangle:
-                        // 初始化矩形选择区域
-                        m_rectangleROI = QRect(m_selectionStart, m_selectionStart);
-                        break;
-                        
-                    case ROISelectionMode::Circle:
-                        // 初始化圆形选择区域 - 根据当前多圆状态决定是处理第一个圆还是第二个圆
-                        if (m_multiCircleState == MultiCircleState::FirstCircle) {
-                            qDebug() << "开始选择第二个圆";
-                            // 当开始选择第二个圆时，不要使用m_circleCenter，而是直接使用m_secondCircleCenter
-                            m_secondCircleCenter = m_selectionStart;
-                            m_secondCircleRadius = 0;
-                            m_imageSecondCircleCenter = mapToImageCoordinates(m_selectionStart);
-                            m_imageSecondCircleRadius = 0;
-                        } else {
-                            qDebug() << "开始选择第一个圆";
-                            // 第一次选择圆或重新开始选择
-                            m_circleCenter = m_selectionStart;
-                            m_circleRadius = 0;
-                            m_imageCircleCenter = mapToImageCoordinates(m_selectionStart);
-                            m_imageCircleRadius = 0;
-                        }
-                        break;
-                        
-                    case ROISelectionMode::Arbitrary:
-                        if (!m_selectionInProgress) {
-                            // 开始新的任意形状选择
-                            m_arbitraryPoints.clear();
-                        }
-                        m_arbitraryPoints.append(m_selectionStart);
-                        break;
-                        
-                    default:
-                        break;
-                }
-                
-                // 确保立即更新显示
-                updateROIDisplay();
-            }
-        }
-    } catch (const std::exception& e) {
-        qDebug() << "Error in mousePressEvent:" << e.what();
-    }
-}
-
-void ProcessingWidget::wheelEvent(QWheelEvent *event)
-{
-    if (m_currentImage.isNull() || !imageLabel) {
-        return;
-    }
-    
-    // 保存缩放前的鼠标位置对应的图像坐标
-    QPoint labelPos = imageLabel->mapFrom(this, event->position().toPoint());
-    QPoint imagePos = mapToImageCoordinates(labelPos);
-    
-    // 应用缩放
-    if (event->angleDelta().y() > 0) {
-        // 放大
-        m_zoomFactor = qMin(m_zoomFactor + ZOOM_FACTOR_STEP, MAX_ZOOM);
-    } else {
-        // 缩小
-        m_zoomFactor = qMax(m_zoomFactor - ZOOM_FACTOR_STEP, MIN_ZOOM);
-    }
-    
-    // 更新图像显示
-    if (!m_currentImage.isNull()) {
-        QImage scaledImage = m_currentImage.scaled(
-            qRound(m_currentImage.width() * m_zoomFactor),
-            qRound(m_currentImage.height() * m_zoomFactor),
-            Qt::KeepAspectRatio,
-            Qt::SmoothTransformation
-        );
-        imageLabel->setPixmap(QPixmap::fromImage(scaledImage));
-        
-        // 更新ROI显示层的大小和位置
-        updateROIDisplay();
-    }
-    
-    // 记录缩放信息
-    qDebug() << "图像缩放: " << m_zoomFactor;
-}
-
-// 更新k值标签
-void ProcessingWidget::updateKValueLabel(int value)
-{
-    double k = 1.0;
-    if (value >= 0) {
-        k = 1.0 + value / 100.0;  // k范围是1.0到2.0
-    } else {
-        k = 1.0 + value / 100.0;  // k范围是0.0到1.0
-    }
-    lblKValue->setText(QString("k = %1").arg(k, 0, 'f', 2));
-}
-
-// 更新b值标签
-void ProcessingWidget::updateBValueLabel(int value)
-{
-    lblBValue->setText(QString("b = %1").arg(value));
-}
-
-// 更新Gamma值标签
-void ProcessingWidget::updateGammaValueLabel(int value)
-{
-    double gamma = value / 10.0;
-    lblGammaValue->setText(QString("γ = %1").arg(gamma, 0, 'f', 2));
-}
-
-// 重置标签显示
-void ProcessingWidget::resetValueLabels()
-{
-    // 重置k值标签为默认值
-    lblKValue->setText("k = 1.00");
-
-    // 重置b值标签为默认值
-    lblBValue->setText("b = 0");
-
-    // 重置Gamma值标签为默认值
-    lblGammaValue->setText("γ = 1.00");
-}
-
-void ProcessingWidget::mouseMoveEvent(QMouseEvent *event)
-{
-    try {
-        // 如果没有图像，不处理
-        if (m_currentImage.isNull() || !imageLabel) {
-            return;
-        }
-        
-        // 获取图像在标签中的实际显示区域
-        QRect actualImageRect = getScaledImageRect();
-        
-        // 获取鼠标位置相对于imageLabel的坐标
-        QPoint labelPos = imageLabel->mapFrom(this, event->position().toPoint());
-        
-        // 检查鼠标是否在imageLabel区域内
-        if (!imageLabel->rect().contains(labelPos)) {
-            return;
-        }
-        
-        // --- 新增：处理ROI移动 --- 
-        if (m_isMovingROI) {
-            // 计算鼠标移动的偏移量
-            QPoint offset = labelPos - m_moveStartPos;
-            
-            // 获取实际图像区域，限制移动范围
-            QRect actualImageRect = getScaledImageRect();
-
-            if (m_movingCircleIndex == 0) { // 移动第一个圆
-                QPoint newCenter = m_circleCenter + offset;
-                // 限制圆心在图像显示区域内 (UI坐标)
-                newCenter.setX(qBound(actualImageRect.left() + m_circleRadius, newCenter.x(), actualImageRect.right() - m_circleRadius));
-                newCenter.setY(qBound(actualImageRect.top() + m_circleRadius, newCenter.y(), actualImageRect.bottom() - m_circleRadius));
-                
-                // 更新UI和图像坐标
-                m_circleCenter = newCenter;
-                m_imageCircleCenter = mapToImageCoordinates(m_circleCenter);
-                qDebug() << "移动第一个圆到(UI):" << m_circleCenter << "(图像):" << m_imageCircleCenter;
-            } else if (m_movingCircleIndex == 1) { // 移动第二个圆
-                QPoint newCenter = m_secondCircleCenter + offset;
-                // 限制圆心在图像显示区域内 (UI坐标)
-                newCenter.setX(qBound(actualImageRect.left() + m_secondCircleRadius, newCenter.x(), actualImageRect.right() - m_secondCircleRadius));
-                newCenter.setY(qBound(actualImageRect.top() + m_secondCircleRadius, newCenter.y(), actualImageRect.bottom() - m_secondCircleRadius));
-                
-                // 更新UI和图像坐标
-                m_secondCircleCenter = newCenter;
-                m_imageSecondCircleCenter = mapToImageCoordinates(m_secondCircleCenter);
-                 qDebug() << "移动第二个圆到(UI):" << m_secondCircleCenter << "(图像):" << m_imageSecondCircleCenter;
-            }
-            
-            // 更新起始点以便计算下一次偏移
-            m_moveStartPos = labelPos;
-            
-            // 更新显示
-            updateROIDisplay();
-            return; // 移动操作优先，不执行后续逻辑
-        }
-        // --- 移动处理结束 ---
-        
-        // --- 修改：添加悬停光标 --- 
-        bool hoveringOnHandle = false;
-        if (m_currentROIMode == ROISelectionMode::Circle && 
-            m_multiCircleState >= MultiCircleState::SecondCircle && 
-            !m_selectionInProgress && !m_isMovingROI) {
-            // 检查是否悬停在第一个圆心
-            if (m_circleRadius > 0) {
-                int dx1 = labelPos.x() - m_circleCenter.x();
-                int dy1 = labelPos.y() - m_circleCenter.y();
-                if (dx1*dx1 + dy1*dy1 <= circleCenterHandleRadius * circleCenterHandleRadius) {
-                    hoveringOnHandle = true;
-                }
-            }
-            // 检查是否悬停在第二个圆心
-            if (!hoveringOnHandle && m_secondCircleRadius > 0) {
-                int dx2 = labelPos.x() - m_secondCircleCenter.x();
-                int dy2 = labelPos.y() - m_secondCircleCenter.y();
-                if (dx2*dx2 + dy2*dy2 <= circleCenterHandleRadius * circleCenterHandleRadius) {
-                    hoveringOnHandle = true;
-                }
-            }
-        }
-        
-        if (hoveringOnHandle) {
-            setCursor(Qt::OpenHandCursor);
-        } else if (!m_isMovingROI && !m_selectionInProgress) { // 只有在非移动和非选择状态才恢复默认光标
-             // 根据当前ROI模式设置默认光标，或者就是ArrowCursor
-            switch (m_currentROIMode) {
-                case ROISelectionMode::Rectangle: setCursor(Qt::CrossCursor); break;
-                case ROISelectionMode::Circle:    setCursor(Qt::CrossCursor); break;
-                case ROISelectionMode::Arbitrary: setCursor(Qt::PointingHandCursor); break;
-                default:                          setCursor(Qt::ArrowCursor); break;
-            } 
-        }
-        // --- 悬停光标结束 ---
-
-        // 非ROI选择模式 - 显示像素信息
-        if (m_currentROIMode == ROISelectionMode::None || !m_selectionInProgress) {
-            // 检查鼠标是否在实际图像区域内
-            if (actualImageRect.contains(labelPos)) {
-                // 将UI坐标映射到图像坐标
-                QPoint imagePos = mapToImageCoordinates(labelPos);
-                
-                // 检查坐标是否有效
-                if (imagePos.x() >= 0 && imagePos.y() >= 0 && 
-                    imagePos.x() < m_currentImage.width() && 
-                    imagePos.y() < m_currentImage.height()) {
-                    // 获取像素灰度值
-                    QColor pixelColor = m_currentImage.pixelColor(imagePos);
-                    int grayValue = qGray(pixelColor.red(), pixelColor.green(), pixelColor.blue());
-
-                    // 发送坐标和灰度值
-                    emit mouseMoved(imagePos, grayValue);
-                }
-            }
-            return;
-        }
-
-        // ROI选择模式下的处理
-        if (m_selectionInProgress) {
-            // 限制鼠标位置在实际图像区域内
-            QPoint constrainedPos;
-            constrainedPos.setX(qBound(actualImageRect.left(), labelPos.x(), actualImageRect.right()));
-            constrainedPos.setY(qBound(actualImageRect.top(), labelPos.y(), actualImageRect.bottom()));
-            
-            m_selectionCurrent = constrainedPos;
-            
-            // 更新ROI数据
-            if (m_currentROIMode == ROISelectionMode::Rectangle) {
-                // 更新矩形选择 (UI坐标)
-                m_rectangleROI = QRect(m_selectionStart, m_selectionCurrent).normalized();
-                
-                // 打印调试信息
-                qDebug() << "---------- 鼠标移动更新ROI ----------";
-                qDebug() << "选择起点:" << m_selectionStart;
-                qDebug() << "选择当前点:" << m_selectionCurrent;
-                qDebug() << "实际图像区域:" << actualImageRect;
-                
-                // 更新对应的图像坐标 - 直接转换矩形的左上角和右下角点
-                QPoint topLeft = mapToImageCoordinates(m_rectangleROI.topLeft());
-                QPoint bottomRight = mapToImageCoordinates(m_rectangleROI.bottomRight());
-                
-                // 确保有效的图像坐标
-                if (topLeft.x() >= 0 && topLeft.y() >= 0 && 
-                    bottomRight.x() >= 0 && bottomRight.y() >= 0) {
-                    m_imageRectangleROI = QRect(topLeft, bottomRight);
-                    
-                    // 打印最终结果
-                    qDebug() << "图像宽高:" << m_currentImage.width() << "x" << m_currentImage.height();
-                    qDebug() << "矩形ROI(UI):" << m_rectangleROI;
-                    qDebug() << "矩形ROI(图像):" << m_imageRectangleROI;
-                }
-                qDebug() << "-------------------------------";
-            } else if (m_currentROIMode == ROISelectionMode::Circle) {
-                // 根据当前状态决定更新第一个圆还是第二个圆
-                if (m_multiCircleState == MultiCircleState::FirstCircle) {
-                    // 更新第二个圆
-                    int dx = m_selectionCurrent.x() - m_selectionStart.x();
-                    int dy = m_selectionCurrent.y() - m_selectionStart.y();
-                    m_secondCircleRadius = static_cast<int>(sqrt(dx*dx + dy*dy));
-                    
-                    // 更新图像坐标
-                    QPoint edgePoint(
-                        m_secondCircleCenter.x() + qRound(m_secondCircleRadius * cos(0)),
-                        m_secondCircleCenter.y() + qRound(m_secondCircleRadius * sin(0))
-                    );
-                    
-                    if (actualImageRect.contains(edgePoint)) {
-                        QPoint imageEdgePoint = mapToImageCoordinates(edgePoint);
-                        
-                        if (imageEdgePoint.x() >= 0 && imageEdgePoint.y() >= 0) {
-                            m_imageSecondCircleRadius = static_cast<int>(
-                                sqrt(pow(imageEdgePoint.x() - m_imageSecondCircleCenter.x(), 2) + 
-                                     pow(imageEdgePoint.y() - m_imageSecondCircleCenter.y(), 2))
-                            );
-                            
-                            qDebug() << "第二个圆 - 中心(UI): " << m_secondCircleCenter 
-                                     << " 半径: " << m_secondCircleRadius;
-                            qDebug() << "第二个圆 - 中心(图像): " << m_imageSecondCircleCenter 
-                                     << " 半径: " << m_imageSecondCircleRadius;
-                        }
-                    }
-                } else {
-                    // 更新第一个圆
-                    int dx = m_selectionCurrent.x() - m_selectionStart.x();
-                    int dy = m_selectionCurrent.y() - m_selectionStart.y();
-                    m_circleRadius = static_cast<int>(sqrt(dx*dx + dy*dy));
-                    
-                    // 更新对应的图像坐标
-                    m_imageCircleCenter = mapToImageCoordinates(m_circleCenter);
-                    
-                    // 计算图像坐标中的半径
-                    if (m_imageCircleCenter.x() >= 0 && m_imageCircleCenter.y() >= 0) {
-                        // 取圆上的水平右侧点
-                        double angle = 0;
-                        QPoint edgePoint(
-                            m_circleCenter.x() + qRound(m_circleRadius * cos(angle)),
-                            m_circleCenter.y() + qRound(m_circleRadius * sin(angle))
-                        );
-                        
-                        // 确保边缘点在图像区域内
-                        if (actualImageRect.contains(edgePoint)) {
-                            QPoint imageEdgePoint = mapToImageCoordinates(edgePoint);
-                            
-                            // 计算图像坐标中的半径（两点间距离）
-                            if (imageEdgePoint.x() >= 0 && imageEdgePoint.y() >= 0) {
-                                m_imageCircleRadius = static_cast<int>(
-                                    sqrt(pow(imageEdgePoint.x() - m_imageCircleCenter.x(), 2) + 
-                                        pow(imageEdgePoint.y() - m_imageCircleCenter.y(), 2))
-                                );
-                                
-                                qDebug() << "第一个圆 - 中心(UI): " << m_circleCenter << " 半径: " << m_circleRadius;
-                                qDebug() << "第一个圆 - 中心(图像): " << m_imageCircleCenter << " 半径: " << m_imageCircleRadius;
-                            }
-                        }
-                    }
+                    return;
                 }
             }
             
-            // 更新ROI覆盖层
-            updateROIDisplay();
-        }
-    } catch (const std::exception& e) {
-        qDebug() << "Error in mouseMoveEvent:" << e.what();
-    }
-}
-
-void ProcessingWidget::mouseReleaseEvent(QMouseEvent *event)
-{
-    try {
-        // --- 新增：结束ROI移动 --- 
-        if (m_isMovingROI) {
-            m_isMovingROI = false;
-            m_movingCircleIndex = -1;
-            setCursor(Qt::OpenHandCursor); // Or ArrowCursor, depending on preference
-            qDebug() << "结束移动ROI";
-            
-            // 移动结束后，重新计算环形ROI的状态（如果需要）
-            // 这里可以触发一个信号通知MainWindow更新统计信息，或者直接在这里计算
-            // 例如：calculateRingROI(); // 重新计算，但可能不需要
-            // emit ringROISelected(m_imageCircleCenter, m_imageCircleRadius, 
-            //                      m_imageSecondCircleCenter, m_imageSecondCircleRadius); // 通知位置已更新
-                             
-            updateROIDisplay(); // 确保最终位置被绘制
-            return; // 结束移动，不执行后续的选择完成逻辑
-        }
-        // --- 移动结束处理 ---
-        
-        if (event->button() == Qt::LeftButton && m_selectionInProgress) {
+            // 如果不是移动ROI，执行常规ROI选择逻辑
             switch (m_currentROIMode) {
                 case ROISelectionMode::Rectangle:
-                    // 完成矩形选择
-                    m_selectionInProgress = false;
-                    
-                    // 确保至少有一定大小的矩形
-                    if (m_rectangleROI.width() > 5 && m_rectangleROI.height() > 5) {
-                        // 确保直接使用已计算好的m_imageRectangleROI
-                        if (!m_imageRectangleROI.isNull()) {
-                            // 发送ROI选择信号 (传递图像坐标)
-                            emit roiSelected(m_imageRectangleROI);
-                            
-                            // 启用应用按钮
-                            if (btnApplyROI) {
-                                btnApplyROI->setEnabled(true);
-                            }
-                            
-                            // 打印调试信息
-                            qDebug() << "矩形ROI选择完成";
-                            qDebug() << "UI坐标: " << m_rectangleROI;
-                            qDebug() << "图像坐标: " << m_imageRectangleROI;
-                        }
-                    }
+                    // 开始矩形选择
+                    m_selectionStart = pos;
+                    m_selectionCurrent = m_selectionStart;
+                    m_selectionInProgress = true;
+                    setCursor(Qt::CrossCursor);
                     break;
                     
                 case ROISelectionMode::Circle:
-                    // 完成圆形选择
-                    m_selectionInProgress = false;
-                    
-                    // 确保至少有一定半径的圆
-                    if (m_circleRadius > 5) {
-                        // 确保m_imageCircleCenter和m_imageCircleRadius有效
-                        if (m_imageCircleCenter.x() >= 0 && m_imageCircleRadius > 0) {
-                            
-                            // 根据多圆选择状态处理
-                            if (m_multiCircleState == MultiCircleState::None) {
-                                // 第一个圆选择完成，保存第一个圆的信息
-                                QPoint firstCircleCenter = m_circleCenter;
-                                int firstCircleRadius = m_circleRadius;
-                                QPoint firstImageCircleCenter = m_imageCircleCenter;
-                                int firstImageCircleRadius = m_imageCircleRadius;
-                                
-                                // 转换到多圆状态
-                                m_multiCircleState = MultiCircleState::FirstCircle;
-                                
-                                qDebug() << "第一个圆形ROI选择完成";
-                                qDebug() << "UI中心: " << firstCircleCenter << " 半径: " << firstCircleRadius;
-                                qDebug() << "图像中心: " << firstImageCircleCenter << " 半径: " << firstImageCircleRadius;
-                                
-                                // 需要立即进入选择第二个圆的状态，不要发送信号
-                                // 提示用户继续选择第二个圆
-                                QMessageBox::information(this, tr("第一个圆选择完成"), 
-                                                       tr("请继续选择第二个圆以创建环形ROI"));
-                                
-                                // 重置选择状态，但保持ROI模式，以便用户可以继续选择第二个圆
-                                m_selectionInProgress = false;
-                                
-                                // 不启用应用按钮，直到选择完第二个圆
-                                if (btnApplyROI) {
-                                    btnApplyROI->setEnabled(false);
-                                }
-                            } 
-                            else if (m_multiCircleState == MultiCircleState::FirstCircle) {
-                                // 第二个圆选择完成，已经在鼠标移动事件中更新了m_secondCircleCenter等变量
-                                // 打印调试信息用于诊断问题
-                                qDebug() << "检查两个圆是否相同:";
-                                qDebug() << "第一个圆 - 中心:" << m_imageCircleCenter << "半径:" << m_imageCircleRadius;
-                                qDebug() << "第二个圆 - 中心:" << m_imageSecondCircleCenter << "半径:" << m_imageSecondCircleRadius;
-                                
-                                // 判断圆心是否相同需要更精确的比较
-                                double centerDistance = sqrt(
-                                    pow(m_imageSecondCircleCenter.x() - m_imageCircleCenter.x(), 2) +
-                                    pow(m_imageSecondCircleCenter.y() - m_imageCircleCenter.y(), 2)
-                                );
-                                
-                                // 只有当圆心距离接近0且半径几乎相同时才认为是相同的圆
-                                if (centerDistance < 1.0 && abs(m_imageSecondCircleRadius - m_imageCircleRadius) < 1) {
-                                    // 两个圆完全相同，提示用户重新选择
-                                    QMessageBox::warning(this, tr("无效的选择"), 
-                                                       tr("两个圆的中心和半径完全相同，请重新选择第二个圆"),
-                                                       QMessageBox::Ok);
-                                    
-                                    // 重置第二个圆的选择，保持在FirstCircle状态
-                                    m_selectionInProgress = false;
-                                    // 清除第二个圆的数据
-                                    m_secondCircleCenter = QPoint();
-                                    m_secondCircleRadius = 0;
-                                    m_imageSecondCircleCenter = QPoint();
-                                    m_imageSecondCircleRadius = 0;
-                                    return;
-                                }
-                                
-                                // 第二个圆选择完成，更新状态
-                                m_multiCircleState = MultiCircleState::SecondCircle;
-                                
-                                qDebug() << "第二个圆形ROI选择完成";
-                                qDebug() << "UI中心: " << m_secondCircleCenter << " 半径: " << m_secondCircleRadius;
-                                qDebug() << "图像中心: " << m_imageSecondCircleCenter << " 半径: " << m_imageSecondCircleRadius;
-                                
-                                // 计算环形ROI
-                                calculateRingROI();
-                                
-                                // 获取环形ROI中的像素
-                                QVector<int> pixels = getRingROIPixelValues();
-                                
-                                // 检查是否有有效像素
-                                if (pixels.isEmpty()) {
-                                    // 环形区域中没有有效像素
-                                    QMessageBox::warning(this, tr("无效的环形区域"), 
-                                                       tr("环形区域中没有找到有效像素，请重新选择两个圆"),
-                                                       QMessageBox::Ok);
-                                    
-                                    // 重置到第一个圆的状态，让用户重新选择第二个圆
-                                    m_multiCircleState = MultiCircleState::FirstCircle;
-                                    m_selectionInProgress = false;
-                                    // 清除第二个圆的数据
-                                    m_secondCircleCenter = QPoint();
-                                    m_secondCircleRadius = 0;
-                                    m_imageSecondCircleCenter = QPoint();
-                                    m_imageSecondCircleRadius = 0;
-                                    return;
-                                }
-                                
-                                // 两个圆都选择完成，发送环形ROI选择完成信号
-                                emit ringROISelected(m_imageCircleCenter, m_imageCircleRadius,
-                                                  m_imageSecondCircleCenter, m_imageSecondCircleRadius);
-                                
-                                // 此时才启用应用按钮
-                                if (btnApplyROI) {
-                                    btnApplyROI->setEnabled(true);
-                                }
-                                
-                                // 提示用户环形ROI已创建完成
-                                QMessageBox::information(this, tr("环形ROI创建完成"), 
-                                                       tr("环形ROI创建完成，包含 %1 个像素点，您可以点击'应用ROI'按钮进行操作")
-                                                       .arg(pixels.size()));
-                            }
-                        }
+                    // 开始圆形选择或处理多圆状态
+                    if (m_multiCircleState == MultiCircleState::None) {
+                        // 第一个圆的选择开始
+                        m_circleCenter = pos;
+                        m_imageCircleCenter = mapToImageCoordinates(pos);
+                        m_circleRadius = 0;
+                        m_selectionInProgress = true;
+                        m_multiCircleState = MultiCircleState::FirstCircle;
+                    } else if (m_multiCircleState == MultiCircleState::FirstCircle) {
+                        // 开始选择第二个圆 - 立即更新状态为SecondCircle
+                        m_secondCircleCenter = pos;
+                        m_imageSecondCircleCenter = mapToImageCoordinates(pos);
+                        m_secondCircleRadius = 0;
+                        m_selectionInProgress = true;
+                        m_multiCircleState = MultiCircleState::SecondCircle; // 立即更新状态
                     }
                     break;
                     
                 case ROISelectionMode::Arbitrary:
-                    // 对于任意形状，此处不做更改
+                    // 对于任意形状，添加点
+                    if (!m_selectionInProgress) {
+                        // 开始新的任意形状选择
+                        m_arbitraryPoints.clear();
+                        m_selectionInProgress = true;
+                    }
+                    // 添加新的点到任意形状中
+                    m_arbitraryPoints.append(pos);
                     break;
                     
                 default:
@@ -1768,47 +1412,66 @@ void ProcessingWidget::mouseReleaseEvent(QMouseEvent *event)
             
             // 更新ROI覆盖层
             updateROIDisplay();
-        } else if (event->button() == Qt::RightButton && m_selectionInProgress && 
-                  m_currentROIMode == ROISelectionMode::Arbitrary && m_arbitraryPoints.size() > 2) {
-            // 右键单击完成任意形状选择
-            m_selectionInProgress = false;
-            m_arbitraryROI = QPolygon(m_arbitraryPoints);
-            
-            // 转换为图像坐标
-            QPolygon imagePolygon;
-            for (const QPoint& pt : m_arbitraryPoints) {
-                imagePolygon << mapToImageCoordinates(pt);
+        } else if (event->button() == Qt::RightButton) {
+            // 右键用于取消选择
+            if (m_selectionInProgress) {
+                // 取消当前选择
+                m_selectionInProgress = false;
+                m_movingCircle = false;
+                m_currentCircle = 0;
+                setCursor(Qt::ArrowCursor);
+                qDebug() << "ROI选择已取消";
             }
-            
-            // 过滤掉无效坐标
-            QPolygon validImagePolygon;
-            for (const QPoint& pt : imagePolygon) {
-                if (pt.x() >= 0 && pt.y() >= 0) {
-                    validImagePolygon << pt;
-                }
-            }
-            
-            if (validImagePolygon.size() > 2) {
-                m_imageArbitraryROI = validImagePolygon;
-                
-                // 发送ROI选择信号
-                emit roiSelected(m_imageArbitraryROI);
-                
-                // 启用应用按钮
-                if (btnApplyROI) {
-                    btnApplyROI->setEnabled(true);
-                }
-                
-                // 打印调试信息
-                qDebug() << "任意形状ROI选择完成，包含 " << m_imageArbitraryROI.size() << " 个点";
-            }
-            
-            // 更新ROI覆盖层
-            updateROIDisplay();
         }
     } catch (const std::exception& e) {
-        qDebug() << "Error in mouseReleaseEvent:" << e.what();
+        qDebug() << "Error in mousePressEvent:" << e.what();
     }
+}
+
+// 实现处理ROI移动的函数
+void ProcessingWidget::handleRoiMovement(const QPointF& imagePos)
+{
+    // 检查点击位置是否在圆形ROI内部或接近其边缘
+    const int circleCenterHandleRadius = 10; // 圆心附近判定半径
+    
+    // 检查第一个圆
+    if (m_circleRadius > 0) {
+        // 计算点击位置到圆心的距离
+        double dx = imagePos.x() - m_imageCircleCenter.x();
+        double dy = imagePos.y() - m_imageCircleCenter.y();
+        double distance = sqrt(dx*dx + dy*dy);
+        
+        // 如果点击在圆心附近或圆内，选择第一个圆
+        if (distance <= circleCenterHandleRadius || distance <= m_imageCircleRadius) {
+            m_movingCircle = true;
+            m_currentCircle = 1; // 第一个圆
+            setCursor(Qt::SizeAllCursor);
+            qDebug() << "开始移动第一个圆形ROI";
+            return;
+        }
+    }
+    
+    // 检查第二个圆
+    if (m_secondCircleRadius > 0) {
+        // 计算点击位置到圆心的距离
+        double dx = imagePos.x() - m_imageSecondCircleCenter.x();
+        double dy = imagePos.y() - m_imageSecondCircleCenter.y();
+        double distance = sqrt(dx*dx + dy*dy);
+        
+        // 如果点击在圆心附近或圆内，选择第二个圆
+        if (distance <= circleCenterHandleRadius || distance <= m_imageSecondCircleRadius) {
+            m_movingCircle = true;
+            m_currentCircle = 2; // 第二个圆
+            setCursor(Qt::SizeAllCursor);
+            qDebug() << "开始移动第二个圆形ROI";
+            return;
+        }
+    }
+    
+    // 如果点击不在任何圆上，重置状态
+    m_movingCircle = false;
+    m_currentCircle = 0;
+    setCursor(Qt::ArrowCursor);
 }
 
 void ProcessingWidget::paintEvent(QPaintEvent *event)
@@ -2120,6 +1783,25 @@ QRect ProcessingWidget::mapFromImageRect(const QRect& imageRect)
     return QRect(uiLeft, uiTop, uiRight - uiLeft + 1, uiBottom - uiTop + 1);
 }
 
+// 实现calculateImageDistance函数 - 将UI距离转换为图像距离
+int ProcessingWidget::calculateImageDistance(int uiDistance)
+{
+    if (m_currentImage.isNull() || !imageLabel) {
+        return 0;
+    }
+    
+    // 获取图像在标签中的实际显示区域
+    QRect displayRect = getScaledImageRect();
+    
+    // 计算UI距离和图像距离的比例
+    double ratioX = static_cast<double>(m_currentImage.width()) / displayRect.width();
+    
+    // 将UI距离转换为图像距离
+    int imageDistance = qRound(uiDistance * ratioX);
+    
+    return imageDistance;
+}
+
 // 添加一个方法来强制更新ROI显示
 void ProcessingWidget::updateROIDisplay()
 {
@@ -2201,6 +1883,12 @@ void ProcessingWidget::calculateRingROI()
         }
         qDebug() << "像素值样本:" << sampleValues.join(", ");
     }
+    
+    // 环形ROI计算完成后，启用应用按钮
+    if (btnApplyROI) {
+        btnApplyROI->setEnabled(true);
+        qDebug() << "环形ROI计算完成，启用应用按钮";
+    }
 }
 
 // 判断点是否在环形区域内 - 不再局限于内圆和外圆的关系
@@ -2273,6 +1961,653 @@ QVector<int> ProcessingWidget::getRingROIPixelValues() const
     }
     
     return pixelValues;
+}
+
+// --- Implementation for Folder Selection and Navigation ---
+
+void ProcessingWidget::onSelectFolderClicked()
+{
+    try {
+        QString dirPath = QFileDialog::getExistingDirectory(this, tr("选择图片文件夹"),
+                                                        QString(), // Start directory (empty means default)
+                                                        QFileDialog::ShowDirsOnly
+                                                        | QFileDialog::DontResolveSymlinks);
+
+        if (dirPath.isEmpty()) {
+            return; // User cancelled
+        }
+
+        QDir directory(dirPath);
+        qDebug() << "选择文件夹:" << dirPath;
+        
+        // 收集支持的图像格式
+        QStringList nameFilters;
+        QList<QByteArray> supportedFormats = QImageReader::supportedImageFormats();
+        qDebug() << "支持的图像格式:" << supportedFormats;
+        
+        for (const QByteArray &format : supportedFormats) {
+            nameFilters << "*." + QString::fromLatin1(format);
+        }
+
+        // 查找文件夹中的图像文件
+        QStringList foundFiles = directory.entryList(nameFilters, QDir::Files | QDir::Readable);
+        qDebug() << "找到" << foundFiles.size() << "个图像文件";
+
+        if (foundFiles.isEmpty()) {
+            m_currentImageIndex = -1;
+            QMessageBox::information(this, tr("无图像"), tr("在选定文件夹中未找到支持的图像文件。"));
+            // Optionally clear the display or show a placeholder
+            if (imageLabel) {
+                imageLabel->clear(); 
+            }
+            m_currentImage = QImage(); // Clear current image data
+        } else {
+            // 清除旧的图像文件列表
+            m_imageFiles.clear();
+            
+            // 转换为完整路径
+            for (const QString& file : foundFiles) {
+                m_imageFiles.append(directory.filePath(file));
+            }
+            
+            qDebug() << "准备加载第一张图像:" << m_imageFiles.first();
+            m_currentImageIndex = 0;
+            
+            // 使用增强版的displayImageAtIndex加载第一张图像
+            displayImageAtIndex(m_currentImageIndex);
+            qDebug() << "已加载" << m_imageFiles.size() << "张图像，来自" << dirPath;
+        }
+        
+        // 更新导航按钮状态
+        updateNavigationButtonsState();
+        
+        // 更新最后使用的文件夹
+        m_lastSaveFolder = dirPath;
+    }
+    catch (const std::exception& e) {
+        qWarning() << "选择文件夹过程中出现异常:" << e.what();
+        QMessageBox::warning(this, tr("错误"), tr("选择文件夹时出错: %1").arg(e.what()));
+    }
+    catch (...) {
+        qWarning() << "选择文件夹过程中出现未知异常";
+        QMessageBox::warning(this, tr("错误"), tr("选择文件夹时出现未知错误"));
+    }
+}
+
+void ProcessingWidget::displayImageAtIndex(int index)
+{
+    try {
+        if (index < 0 || index >= m_imageFiles.size()) {
+            qDebug() << "Error: Invalid image index" << index;
+            return;
+        }
+
+        QString imagePath = m_imageFiles.at(index);
+        qDebug() << "加载图像文件:" << imagePath << "索引:" << index << "/" << (m_imageFiles.size()-1);
+        
+        // 使用QImageReader加载图像，更安全
+        QImageReader reader(imagePath);
+        
+        // 检查图像格式
+        QByteArray format = reader.format();
+        if (!format.isEmpty()) {
+            qDebug() << "图像格式:" << format;
+        }
+        
+        // 设置错误处理
+        reader.setDecideFormatFromContent(true);
+        
+        QImage newImage;
+        bool success = false;
+        
+        try {
+            // 尝试读取图像
+            success = reader.read(&newImage);
+            
+            if (!success) {
+                qWarning() << "Error loading image:" << imagePath 
+                         << "Error:" << reader.errorString();
+                QMessageBox::warning(this, tr("加载失败"), 
+                                    tr("无法加载图像文件: %1\n错误: %2")
+                                    .arg(QFileInfo(imagePath).fileName())
+                                    .arg(reader.errorString()));
+                return;
+            }
+            
+            // 检查加载的图像是否有效
+            if (newImage.isNull()) {
+                qWarning() << "加载的图像为空";
+                QMessageBox::warning(this, tr("加载失败"), 
+                                    tr("加载的图像为空: %1").arg(QFileInfo(imagePath).fileName()));
+                return;
+            }
+            
+            // 显示加载的图像信息
+            qDebug() << "成功加载图像 - 大小:" << newImage.size() 
+                    << "格式:" << newImage.format() 
+                    << "(" << getQImageFormatName(newImage.format()) << ")"
+                    << "深度:" << newImage.depth() << "位";
+            
+            // 使用安全的displayImage方法显示图像
+            displayImage(newImage);
+            
+            // 更新导航按钮状态
+            updateNavigationButtonsState();
+        }
+        catch (const std::exception& e) {
+            qWarning() << "加载图像时出现异常:" << e.what();
+            QMessageBox::warning(this, tr("加载失败"), 
+                               tr("加载图像时出现异常: %1").arg(e.what()));
+        }
+        catch (...) {
+            qWarning() << "加载图像时出现未知异常";
+            QMessageBox::warning(this, tr("加载失败"), tr("加载图像时出现未知错误"));
+        }
+    }
+    catch (const std::exception& e) {
+        qWarning() << "displayImageAtIndex函数异常:" << e.what();
+    }
+    catch (...) {
+        qWarning() << "displayImageAtIndex函数未知异常";
+    }
+}
+
+void ProcessingWidget::onPrevImageClicked()
+{
+    if (m_imageFiles.size() <= 1) return; // Nothing to navigate
+
+    m_currentImageIndex--;
+    if (m_currentImageIndex < 0) {
+        m_currentImageIndex = m_imageFiles.size() - 1; // Wrap around to the end
+    }
+    displayImageAtIndex(m_currentImageIndex);
+}
+
+void ProcessingWidget::onNextImageClicked()
+{
+    if (m_imageFiles.size() <= 1) return; // Nothing to navigate
+
+    m_currentImageIndex++;
+    if (m_currentImageIndex >= m_imageFiles.size()) {
+        m_currentImageIndex = 0; // Wrap around to the beginning
+    }
+    displayImageAtIndex(m_currentImageIndex);
+}
+
+void ProcessingWidget::updateNavigationButtonsState()
+{
+    bool enable = m_imageFiles.size() > 1;
+    if (btnPrevImage) {
+        btnPrevImage->setEnabled(enable);
+    }
+    if (btnNextImage) {
+        btnNextImage->setEnabled(enable);
+    }
+}
+
+// --- New Slot for Saving Image ---
+void ProcessingWidget::onSaveClicked()
+{
+    if (m_currentImage.isNull()) {
+        QMessageBox::warning(this, tr("无法保存"), tr("没有可保存的图像。"));
+        return;
+    }
+
+    QString defaultFileName;
+    QString currentFileDir = m_lastSaveFolder; // Default to last saved/opened folder
+
+    // Try to get filename and directory from the currently loaded file
+    if (m_currentImageIndex >= 0 && m_currentImageIndex < m_imageFiles.size()) {
+        QFileInfo fileInfo(m_imageFiles[m_currentImageIndex]);
+        QString baseName = fileInfo.completeBaseName();
+        QString suffix = fileInfo.suffix();
+
+        // Suggest a modified name like "original_processed.png"
+        defaultFileName = baseName + "_processed." + suffix;
+        // Use the directory of the current file if m_lastSaveFolder hasn't been set otherwise yet
+        if (QDir(m_lastSaveFolder) == QDir(QDir::currentPath())) { // Check if still default
+             currentFileDir = fileInfo.absolutePath();
+        }
+
+        // Ensure suggested suffix is valid for saving, default to png otherwise
+        if (!QImageWriter::supportedImageFormats().contains(suffix.toUtf8()) || suffix.isEmpty()) {
+             defaultFileName = baseName + "_processed.png";
+        }
+    } else {
+        defaultFileName = "processed_image.png"; // Fallback if no file source known
+    }
+
+    // Construct the initial path for the dialog
+    QString initialPath = QDir(currentFileDir).filePath(defaultFileName);
+
+    QString saveFilePath = QFileDialog::getSaveFileName(
+        this,
+        tr("保存处理后的图像"),
+        initialPath, // Use the constructed initial path
+        tr("PNG (*.png);;JPEG (*.jpg *.jpeg);;Bitmap (*.bmp)") // Provide common formats
+    );
+
+    if (!saveFilePath.isEmpty()) {
+        // Ensure the file has a valid extension based on the filter or default to png
+        QFileInfo fi(saveFilePath);
+        QString suffix = fi.suffix().toLower();
+
+        // Basic check if suffix is valid or force png
+         if (suffix.isEmpty() || !QStringList({"png", "jpg", "jpeg", "bmp"}).contains(suffix)) {
+            saveFilePath += ".png";
+            qWarning() << "Adding default .png suffix as none/invalid was provided:" << saveFilePath;
+         }
+
+        if (m_currentImage.save(saveFilePath)) {
+            QMessageBox::information(this, tr("保存成功"), tr("图像已保存至: %1").arg(saveFilePath));
+            // Update the last used directory to where the file was just saved
+            m_lastSaveFolder = QFileInfo(saveFilePath).absolutePath();
+        } else {
+            QMessageBox::critical(this, tr("保存失败"), tr("无法将图像保存至: %1").arg(saveFilePath));
+        }
+    }
+}
+
+
+// --- End New Slots ---
+
+// --- New Slot for Single Image Selection ---
+void ProcessingWidget::onSelectClicked()
+{
+    // Start browsing from the last used folder
+    QString filePath = QFileDialog::getOpenFileName(this, tr("选择图像"), m_lastSaveFolder, tr("Images (*.png *.jpg *.bmp *.jpeg *.gif)"));
+    if (!filePath.isEmpty()) {
+        // 使用QImageReader安全加载图像
+        QImageReader reader(filePath);
+        reader.setDecideFormatFromContent(true);
+        
+        QImage newImage;
+        if (reader.read(&newImage)) {
+            // Store the path of the single selected image in m_imageFiles for consistency
+            m_imageFiles.clear();
+            m_imageFiles.append(filePath);
+            m_currentImageIndex = 0;
+
+            displayImage(newImage);
+            // Update the last used folder based on this selection
+            m_lastSaveFolder = QFileInfo(filePath).absolutePath();
+            updateNavigationButtonsState(); // Update nav buttons (likely disabling them)
+        } else {
+            QMessageBox::warning(this, tr("加载失败"), 
+                               tr("无法加载图像文件: %1\n错误: %2")
+                               .arg(QFileInfo(filePath).fileName())
+                               .arg(reader.errorString()));
+        }
+    }
+}
+
+void ProcessingWidget::mouseMoveEvent(QMouseEvent *event)
+{
+    try {
+        if (m_currentImage.isNull() || !imageLabel) {
+            return;
+        }
+        
+        // 获取鼠标位置相对于图像标签的坐标
+        QPoint pos = imageLabel->mapFrom(this, event->pos());
+        
+        // 检查鼠标是否在图像标签范围内
+        if (!imageLabel->rect().contains(pos)) {
+            return;
+        }
+        
+        // 转换为图像坐标
+        QPoint imagePos = mapToImageCoordinates(pos);
+        
+        // 如果在移动圆形ROI
+        if (m_movingCircle) {
+            // 根据当前选中的圆进行移动
+            if (m_currentCircle == 1) {
+                // 移动第一个圆
+                m_circleCenter = pos;
+                m_imageCircleCenter = imagePos;
+                qDebug() << "移动第一个圆到 UI坐标:" << pos << " 图像坐标:" << imagePos;
+                updateROIDisplay();
+            } else if (m_currentCircle == 2) {
+                // 移动第二个圆
+                m_secondCircleCenter = pos;
+                m_imageSecondCircleCenter = imagePos;
+                qDebug() << "移动第二个圆到 UI坐标:" << pos << " 图像坐标:" << imagePos;
+                updateROIDisplay();
+            }
+            return;
+        }
+        
+        // 根据当前ROI选择模式处理鼠标移动
+        if (m_selectionInProgress) {
+            switch (m_currentROIMode) {
+                case ROISelectionMode::Rectangle:
+                    // 更新矩形选择
+                    m_selectionCurrent = pos;
+                    m_rectangleROI = QRect(m_selectionStart, m_selectionCurrent).normalized();
+                    // 转换为图像坐标
+                    m_imageRectangleROI = mapToImageRect(m_rectangleROI);
+                    break;
+                    
+                case ROISelectionMode::Circle: {
+                    // 更新圆形选择
+                    // 计算半径 - 鼠标当前位置到圆心的距离
+                    int dx = pos.x() - m_circleCenter.x();
+                    int dy = pos.y() - m_circleCenter.y();
+                    int radius = qRound(sqrt(dx*dx + dy*dy));
+                    
+                    if (m_multiCircleState == MultiCircleState::FirstCircle) {
+                        // 更新第一个圆
+                        m_circleRadius = radius;
+                        m_imageCircleRadius = calculateImageDistance(radius);
+                        // 确保图像坐标中心也被正确设置
+                        if (m_imageCircleCenter.isNull()) {
+                            m_imageCircleCenter = mapToImageCoordinates(m_circleCenter);
+                        }
+                    } else if (m_multiCircleState == MultiCircleState::SecondCircle) {
+                        // 更新第二个圆
+                        m_secondCircleRadius = radius;
+                        m_imageSecondCircleRadius = calculateImageDistance(radius);
+                        // 确保图像坐标中心也被正确设置
+                        if (m_imageSecondCircleCenter.isNull()) {
+                            m_imageSecondCircleCenter = mapToImageCoordinates(m_secondCircleCenter);
+                        }
+                    }
+                    break;
+                }
+                    
+                default:
+                    break;
+            }
+            
+            // 更新ROI显示
+            updateROIDisplay();
+        } else {
+            // 发送鼠标移动信号，包含像素信息
+            QColor pixelColor = m_currentImage.pixelColor(imagePos);
+            int r = pixelColor.red();
+            int g = pixelColor.green();
+            int b = pixelColor.blue();
+            int grayValue = qGray(r, g, b);
+            emit mouseMoved(imagePos, grayValue, r, g, b);
+        }
+    } catch (const std::exception& e) {
+        qDebug() << "Error in mouseMoveEvent:" << e.what();
+    }
+}
+
+void ProcessingWidget::mouseReleaseEvent(QMouseEvent *event)
+{
+    try {
+        if (m_currentImage.isNull() || !imageLabel) {
+            return;
+        }
+
+        // 如果正在移动圆形ROI
+        if (m_movingCircle) {
+            m_movingCircle = false;
+            m_currentCircle = 0;
+            setCursor(Qt::ArrowCursor);
+            
+            // 如果是环形ROI，需要更新环形区域
+            if (m_multiCircleState == MultiCircleState::RingROI) {
+                calculateRingROI();
+                // 如果应用按钮存在，启用它
+                if (btnApplyROI) {
+                    btnApplyROI->setEnabled(true);
+                }
+            }
+            return;
+        }
+        
+        // 如果是右键点击并且正在选择任意形状ROI
+        if (event->button() == Qt::RightButton && m_selectionInProgress && 
+            m_currentROIMode == ROISelectionMode::Arbitrary && m_arbitraryPoints.size() > 2) {
+            // 右键单击完成任意形状选择
+            m_selectionInProgress = false;
+            m_arbitraryROI = QPolygon(m_arbitraryPoints);
+            
+            // 转换为图像坐标
+            QPolygon imagePolygon;
+            for (const QPoint& pt : m_arbitraryPoints) {
+                imagePolygon << mapToImageCoordinates(pt);
+            }
+            
+            // 过滤掉无效坐标
+            QPolygon validImagePolygon;
+            for (const QPoint& pt : imagePolygon) {
+                if (pt.x() >= 0 && pt.y() >= 0) {
+                    validImagePolygon << pt;
+                }
+            }
+            
+            if (validImagePolygon.size() > 2) {
+                m_imageArbitraryROI = validImagePolygon;
+                
+                // 发送ROI选择信号
+                emit roiSelected(m_imageArbitraryROI);
+                
+                // 启用应用按钮
+                if (btnApplyROI) {
+                    btnApplyROI->setEnabled(true);
+                }
+                
+                // 打印调试信息
+                qDebug() << "任意形状ROI选择完成，包含 " << m_imageArbitraryROI.size() << " 个点";
+            }
+            
+            // 更新ROI覆盖层
+            updateROIDisplay();
+            return;
+        }
+        
+        // 处理左键释放 - 完成ROI选择
+        if (event->button() == Qt::LeftButton && m_selectionInProgress) {
+            // 根据当前ROI模式完成选择
+            switch (m_currentROIMode) {
+                case ROISelectionMode::Rectangle:
+                    // 完成矩形选择
+                    m_selectionInProgress = false;
+                    
+                    // 确保矩形有效
+                    if (m_rectangleROI.width() > 0 && m_rectangleROI.height() > 0) {
+                        // 发送ROI选择信号
+                        emit roiSelected(m_imageRectangleROI);
+                        
+                        // 启用应用按钮
+                        if (btnApplyROI) {
+                            btnApplyROI->setEnabled(true);
+                        }
+                    }
+                    break;
+                    
+                case ROISelectionMode::Circle:
+                    // 完成圆形选择
+                    if (m_multiCircleState == MultiCircleState::FirstCircle) {
+                        // 完成第一个圆形选择
+                        m_selectionInProgress = false;
+                        
+                        // 创建圆形ROI
+                        m_roiCircle1 = QRect(m_circleCenter.x() - m_circleRadius, 
+                                          m_circleCenter.y() - m_circleRadius,
+                                          m_circleRadius * 2, m_circleRadius * 2);
+                        
+                        qDebug() << "第一个圆形ROI选择完成";
+                        qDebug() << "UI中心: " << m_circleCenter << " 半径: " << m_circleRadius;
+                        qDebug() << "图像中心: " << m_imageCircleCenter << " 半径: " << m_imageCircleRadius;
+                        
+                    } else if (m_multiCircleState == MultiCircleState::SecondCircle) {
+                        // 完成第二个圆形选择
+                        m_selectionInProgress = false;
+                        
+                        // 创建第二个圆形ROI
+                        m_roiCircle2 = QRect(m_secondCircleCenter.x() - m_secondCircleRadius, 
+                                          m_secondCircleCenter.y() - m_secondCircleRadius,
+                                          m_secondCircleRadius * 2, m_secondCircleRadius * 2);
+                        
+                        // 第二个圆选择完成，状态已经在点击时更新，此处不需要再次设置
+                        // m_multiCircleState = MultiCircleState::SecondCircle;
+                        
+                        qDebug() << "第二个圆形ROI选择完成";
+                        qDebug() << "UI中心: " << m_secondCircleCenter << " 半径: " << m_secondCircleRadius;
+                        qDebug() << "图像中心: " << m_imageSecondCircleCenter << " 半径: " << m_imageSecondCircleRadius;
+                        
+                        // 计算环形ROI
+                        calculateRingROI();
+                        
+                        // 获取环形ROI中的像素
+                        QVector<int> pixels = getRingROIPixelValues();
+                        
+                        // 检查是否有有效像素
+                        if (pixels.isEmpty()) {
+                            // 环形区域中没有有效像素
+                            QMessageBox::warning(this, tr("无效的环形区域"), 
+                                               tr("环形区域中没有找到有效像素，请重新选择两个圆"),
+                                               QMessageBox::Ok);
+                            
+                            // 重置到第一个圆的状态，让用户重新选择第二个圆
+                            m_multiCircleState = MultiCircleState::FirstCircle;
+                            // 清除第二个圆的数据
+                            m_secondCircleCenter = QPoint();
+                            m_secondCircleRadius = 0;
+                            m_imageSecondCircleCenter = QPoint();
+                            m_imageSecondCircleRadius = 0;
+                            m_roiCircle2 = QRect();
+                        } else {
+                            // 两个圆都选择完成，发送环形ROI选择完成信号
+                            emit ringROISelected(m_imageCircleCenter, m_imageCircleRadius,
+                                              m_imageSecondCircleCenter, m_imageSecondCircleRadius);
+                            
+                            // 此时才启用应用按钮
+                            if (btnApplyROI) {
+                                btnApplyROI->setEnabled(true);
+                                qDebug() << "环形ROI创建完成，应用按钮已启用";
+                            }
+                            
+                            // 提示用户环形ROI已创建完成
+                            QMessageBox::information(this, tr("环形ROI创建完成"), 
+                                                   tr("环形ROI创建完成，包含 %1 个像素点，您可以点击'应用ROI'按钮进行操作")
+                                                   .arg(pixels.size()));
+                        }
+                    }
+                    break;
+                    
+                default:
+                    break;
+            }
+            
+            // 更新ROI覆盖层
+            updateROIDisplay();
+        }
+        
+        // 只有当没有完成有效选择时，才禁用应用按钮
+        if (btnApplyROI && !m_selectionInProgress) {
+            // 根据环形ROI是否有效来决定是否启用应用按钮
+            if (m_multiCircleState == MultiCircleState::RingROI && !m_imageCircleCenter.isNull() && !m_imageSecondCircleCenter.isNull()) {
+                btnApplyROI->setEnabled(true);
+            } else if (!m_rectangleROI.isNull() && m_rectangleROI.width() > 0 && m_rectangleROI.height() > 0) {
+                btnApplyROI->setEnabled(true);
+            } else if (m_arbitraryPoints.size() > 2) {
+                btnApplyROI->setEnabled(true);
+            } else {
+                btnApplyROI->setEnabled(false);
+            }
+        }
+        
+        // 重置鼠标形状
+        setCursor(Qt::ArrowCursor);
+        
+        // 更新覆盖层
+        updateROIDisplay();
+    } catch (const std::exception& e) {
+        qDebug() << "Error in mouseReleaseEvent:" << e.what();
+    }
+}
+
+// Add this implementation for wheelEvent
+void ProcessingWidget::wheelEvent(QWheelEvent *event)
+{
+    if (m_currentImage.isNull() || !imageLabel) {
+        return;
+    }
+
+    // Handle zooming with Ctrl+Mouse Wheel
+    if (event->modifiers() & Qt::ControlModifier) {
+        double numDegrees = event->angleDelta().y() / 8.0;
+        double numSteps = numDegrees / 15.0;
+        
+        // Calculate new zoom factor
+        double newZoomFactor = m_zoomFactor + numSteps * ZOOM_FACTOR_STEP;
+        
+        // Clamp zoom factor to min/max limits
+        newZoomFactor = qBound(MIN_ZOOM, newZoomFactor, MAX_ZOOM);
+        
+        if (newZoomFactor != m_zoomFactor) {
+            m_zoomFactor = newZoomFactor;
+            
+            // Update image display with new zoom factor
+            if (!m_currentImage.isNull() && imageLabel) {
+                QPixmap pixmap = QPixmap::fromImage(m_currentImage);
+                QSize scaledSize = pixmap.size() * m_zoomFactor;
+                
+                // Maintain aspect ratio
+                pixmap = pixmap.scaled(scaledSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                imageLabel->setPixmap(pixmap);
+                
+                // Update ROI display with new zoom
+                updateROIDisplay();
+            }
+            
+            qDebug() << "Zoom factor changed to:" << m_zoomFactor;
+        }
+        
+        event->accept();
+    } else {
+        // Pass other wheel events to parent
+        QWidget::wheelEvent(event);
+    }
+}
+
+// Add this implementation for updateKValueLabel
+void ProcessingWidget::updateKValueLabel(int value)
+{
+    if (!lblKValue) {
+        return;
+    }
+    
+    // Calculate the actual brightness multiplier value (range from 0.1 to 2.0)
+    double k = 1.0 + (value / 100.0);
+    
+    // Update the label
+    lblKValue->setText(QString("k = %1").arg(k, 0, 'f', 2));
+}
+
+// Add this implementation for updateBValueLabel
+void ProcessingWidget::updateBValueLabel(int value)
+{
+    if (!lblBValue) {
+        return;
+    }
+    
+    // Convert slider value to actual offset (-100 to 100)
+    int b = value;
+    
+    // Update the label
+    lblBValue->setText(QString("b = %1").arg(b));
+}
+
+// Add this implementation for updateGammaValueLabel
+void ProcessingWidget::updateGammaValueLabel(int value)
+{
+    if (!lblGammaValue) {
+        return;
+    }
+    
+    // Calculate the actual gamma value (range from 0.1 to 2.0)
+    double gamma = value / 10.0;
+    
+    // Update the label
+    lblGammaValue->setText(QString("γ = %1").arg(gamma, 0, 'f', 2));
 }
 
 

@@ -58,6 +58,9 @@ private slots:
                           const QPoint& secondCenter, int secondRadius);
     void onApplyROI();
     void onRectangleROIButtonClicked();
+    
+    // 新增：处理图像变化的槽函数
+    void onImageChanged(const QImage &image);
 
 private:
     void setupUI();

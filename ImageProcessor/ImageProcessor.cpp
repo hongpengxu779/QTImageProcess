@@ -45,6 +45,14 @@ const QImage& ImageProcessor::getProcessedImage() const
     return processedImage;
 }
 
+void ImageProcessor::setProcessedImage(const QImage &image)
+{
+    if (!image.isNull()) {
+        processedImage = image.copy(); // 创建一个深拷贝
+        emit imageProcessed(); // 发送图像已处理信号
+    }
+}
+
 void ImageProcessor::resetToOriginal()
 {
     if (!originalImage.isNull()) {
@@ -850,6 +858,32 @@ cv::Mat ImageProcessor::QImageToMat(const QImage &image)
                     }
                     
                     qDebug() << "QImageToMat: Created grayscale Mat using safe copy, size:"
+                             << mat.cols << "x" << mat.rows 
+                             << "Channels:" << mat.channels();
+                }
+                break;
+                
+            case QImage::Format_Indexed8:
+                {
+                    qDebug() << "QImageToMat: Processing Format_Indexed8";
+                    
+                    // 将索引色图像转换为RGB32格式
+                    QImage convertedImage = copy.convertToFormat(QImage::Format_RGB32);
+                    
+                    // 创建目标矩阵
+                    mat = cv::Mat(convertedImage.height(), convertedImage.width(), CV_8UC3);
+                    
+                    // 逐像素复制，把RGB32转为BGR
+                    for (int y = 0; y < convertedImage.height(); ++y) {
+                        for (int x = 0; x < convertedImage.width(); ++x) {
+                            QRgb pixel = convertedImage.pixel(x, y);
+                            mat.at<cv::Vec3b>(y, x)[0] = qBlue(pixel);   // B
+                            mat.at<cv::Vec3b>(y, x)[1] = qGreen(pixel);  // G
+                            mat.at<cv::Vec3b>(y, x)[2] = qRed(pixel);    // R
+                        }
+                    }
+                    
+                    qDebug() << "QImageToMat: Converted Indexed8 to BGR using safe copy, Mat size:"
                              << mat.cols << "x" << mat.rows 
                              << "Channels:" << mat.channels();
                 }
