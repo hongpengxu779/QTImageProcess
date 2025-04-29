@@ -1072,191 +1072,21 @@ void MainWindow::onApplyROI()
     m_pixelInfoLabel->setText(tr("点击图像显示坐标和RGB值"));
 }
 
-// 实现环形ROI统计计算函数
-void MainWindow::calculateRingROIStats(const QImage& image, 
-                                     const QPoint& firstCenter, int firstRadius,
-                                     const QPoint& secondCenter, int secondRadius,
-                                     double& mean, double& variance, int& pixelCount)
-{
-    // 初始化返回值
-    mean = 0.0;
-    variance = 0.0;
-    pixelCount = 0;
-    
-    // 输入验证
-    if (image.isNull() || firstRadius <= 0 || secondRadius <= 0) {
-        qDebug() << "Invalid input to calculateRingROIStats";
-        return;
-    }
-    
-    // 确定环形区域的边界盒
-    int left = qMin(firstCenter.x() - firstRadius, secondCenter.x() - secondRadius);
-    int top = qMin(firstCenter.y() - firstRadius, secondCenter.y() - secondRadius);
-    int right = qMax(firstCenter.x() + firstRadius, secondCenter.x() + secondRadius);
-    int bottom = qMax(firstCenter.y() + firstRadius, secondCenter.y() + secondRadius);
-    
-    // 确保边界盒在图像范围内
-    left = qMax(0, left);
-    top = qMax(0, top);
-    right = qMin(image.width() - 1, right);
-    bottom = qMin(image.height() - 1, bottom);
-    
-    // 计算和和像素数
-    double sum = 0.0;
-    QVector<int> pixelValues;
-    
-    // 遍历边界盒中的每个像素
-    for (int y = top; y <= bottom; ++y) {
-        for (int x = left; x <= right; ++x) {
-            // 计算像素到两个圆心的距离
-            double dx1 = x - firstCenter.x();
-            double dy1 = y - firstCenter.y();
-            double dist1 = sqrt(dx1*dx1 + dy1*dy1);
-            
-            double dx2 = x - secondCenter.x();
-            double dy2 = y - secondCenter.y();
-            double dist2 = sqrt(dx2*dx2 + dy2*dy2);
-            
-            // 判断点是否属于环形区域（点在其中一个圆内但不在另一个圆内）
-            bool inFirstCircle = (dist1 <= firstRadius);
-            bool inSecondCircle = (dist2 <= secondRadius);
-            
-            if ((inFirstCircle && !inSecondCircle) || (inSecondCircle && !inFirstCircle)) {
-                // 点在环形区域内
-                QColor pixelColor = image.pixelColor(x, y);
-                int grayValue = qGray(pixelColor.red(), pixelColor.green(), pixelColor.blue());
-                
-                sum += grayValue;
-                pixelValues.append(grayValue);
-                pixelCount++;
-            }
-        }
-    }
-    
-    // 计算均值
-    if (pixelCount > 0) {
-        mean = sum / pixelCount;
-        
-        // 计算方差
-        double sumSquaredDiff = 0.0;
-        for (int value : pixelValues) {
-            double diff = value - mean;
-            sumSquaredDiff += diff * diff;
-        }
-        
-        variance = sumSquaredDiff / pixelCount;
-    }
-}
-
 // 实现环形ROI选择处理函数
 void MainWindow::onRingROISelected(const QPoint& firstCenter, int firstRadius, 
                                  const QPoint& secondCenter, int secondRadius)
 {
-    if (!imageProcessor || imageProcessor->getProcessedImage().isNull()) {
-        return;
-    }
+    // 更新状态栏提示，表示环形ROI选择完成
+    m_statusLabel->setText(tr("已选择环形ROI"));
+    QString info = QString("环形ROI: 圆1(%1,%2, R%3), 圆2(%4,%5, R%6)")
+                        .arg(firstCenter.x()).arg(firstCenter.y()).arg(firstRadius)
+                        .arg(secondCenter.x()).arg(secondCenter.y()).arg(secondRadius);
+    m_pixelInfoLabel->setText(info);
     
-    // 检查是否为同一个圆
-    double centerDistance = sqrt(
-        pow(secondCenter.x() - firstCenter.x(), 2) + 
-        pow(secondCenter.y() - firstCenter.y(), 2)
-    );
+    // 注意：移除这里的弹窗和保存逻辑
+    // 用户应该通过点击"应用ROI"按钮来触发统计和保存
     
-    if (centerDistance < 1.0 && abs(secondRadius - firstRadius) < 1) {
-        QMessageBox::warning(this, tr("无效的环形ROI"), 
-                           tr("两个圆的中心和半径完全相同，无法生成有效的环形区域！"),
-                           QMessageBox::Ok);
-        return;
-    }
-    
-    // 获取当前处理后的图像
-    QImage processedImage = imageProcessor->getProcessedImage();
-    
-    // 创建一个与原图像尺寸相同的透明图像
-    QImage roiImage(processedImage.size(), QImage::Format_ARGB32_Premultiplied);
-    roiImage.fill(Qt::transparent);
-    
-    // 创建绘制器
-    QPainter painter(&roiImage);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    
-    // 设置剪裁路径为环形区域 (相对于原来的实现，这里修改为处理任意位置关系的两个圆)
-    QPainterPath firstCirclePath;
-    firstCirclePath.addEllipse(firstCenter, firstRadius, firstRadius);
-    
-    QPainterPath secondCirclePath;
-    secondCirclePath.addEllipse(secondCenter, secondRadius, secondRadius);
-    
-    // 对称差集：(A-B)∪(B-A)，获取两个圆的不重叠部分
-    QPainterPath ringPath = firstCirclePath.subtracted(secondCirclePath);
-    ringPath = ringPath.united(secondCirclePath.subtracted(firstCirclePath));
-    
-    // 设置裁剪路径
-    painter.setClipPath(ringPath);
-    
-    // 绘制原图像到裁剪区域
-    painter.drawImage(0, 0, processedImage);
-    painter.end();
-    
-    // 计算包围盒 - 使用两个圆的外部包围盒的并集
-    QRect firstBoundingRect(firstCenter.x() - firstRadius, firstCenter.y() - firstRadius,
-                          firstRadius * 2, firstRadius * 2);
-    QRect secondBoundingRect(secondCenter.x() - secondRadius, secondCenter.y() - secondRadius,
-                          secondRadius * 2, secondRadius * 2);
-    QRect boundingRect = firstBoundingRect.united(secondBoundingRect);
-    
-    // 裁剪到包围盒
-    roiImage = roiImage.copy(boundingRect);
-    
-    // 计算ROI的均值和方差
-    double mean = 0.0, variance = 0.0;
-    int pixelCount = 0;
-    calculateRingROIStats(processedImage, firstCenter, firstRadius,
-                        secondCenter, secondRadius, mean, variance, pixelCount);
-    
-    // 检查是否找到了像素点
-    if (pixelCount == 0) {
-        QMessageBox::warning(this, tr("无效的环形ROI"), 
-                           tr("环形区域内未找到任何有效像素点！请重新选择两个不同位置或不同大小的圆。"),
-                           QMessageBox::Ok);
-        return;
-    }
-    
-    // 生成ROI信息
-    QString roiInfo = QString("环形ROI区域(像素坐标):\n"
-                            "第一个圆: 中心(%1, %2), 半径: %3\n"
-                            "第二个圆: 中心(%4, %5), 半径: %6\n"
-                            "像素数量: %7")
-                            .arg(firstCenter.x())
-                            .arg(firstCenter.y())
-                            .arg(firstRadius)
-                            .arg(secondCenter.x())
-                            .arg(secondCenter.y())
-                            .arg(secondRadius)
-                            .arg(pixelCount);
-    
-    // 添加统计信息
-    roiInfo += QString("\n\n区域统计信息:\n均值: %1\n方差: %2")
-                    .arg(mean, 0, 'f', 2)
-                    .arg(variance, 0, 'f', 2);
-    
-    // 显示ROI信息
-    QMessageBox::information(this, tr("环形ROI选择完成"), roiInfo, QMessageBox::Ok);
-    
-    // 保存ROI图像
-    QString filePath = QFileDialog::getSaveFileName(this, tr("保存ROI图像"),
-                                                 "", tr("图像文件 (*.png *.jpg *.bmp)"));
-    if (!filePath.isEmpty()) {
-        if (roiImage.save(filePath)) {
-            QMessageBox::information(this, tr("保存成功"), 
-                                   tr("ROI图像已保存到: %1").arg(filePath), 
-                                   QMessageBox::Ok);
-        } else {
-            QMessageBox::warning(this, tr("保存失败"), 
-                               tr("无法保存ROI图像到: %1").arg(filePath), 
-                               QMessageBox::Ok);
-        }
-    }
+    qDebug() << "环形ROI选择完成，等待用户应用...";
 }
 
 

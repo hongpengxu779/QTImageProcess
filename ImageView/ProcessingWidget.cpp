@@ -262,7 +262,10 @@ protected:
         }
         
         // 新增：绘制第二个圆形ROI
-        if (m_multiCircleState >= MultiCircleState::SecondCircle && m_secondCircleRadius > 0) {
+        // 修改条件：在选择第二个圆时(FirstCircle state + inProgress) 或 选择完成后(SecondCircle/RingROI state) 都绘制
+        if (m_secondCircleRadius > 0 && 
+            (m_multiCircleState >= MultiCircleState::SecondCircle || 
+             (m_multiCircleState == MultiCircleState::FirstCircle && m_selectionInProgress))) {
             // 使用不同的颜色绘制第二个圆形
             QPen secondCirclePen(QColor(255, 128, 0)); // 橙色表示第二个圆
             secondCirclePen.setWidth(2);
@@ -1178,13 +1181,47 @@ void ProcessingWidget::mousePressEvent(QMouseEvent *event)
             return;
         }
         
-        // 检查点击是否在实际图像区域内
-        if (!actualImageRect.contains(labelPos)) {
+        // 检查点击是否在实际图像区域内 (除非是准备移动ROI)
+        if (!actualImageRect.contains(labelPos) && m_currentROIMode != ROISelectionMode::Circle) {
             qDebug() << "鼠标点击在图像显示区域外，忽略";
             return;
         }
+
+        // --- 新增：检测是否开始移动已选定的圆 --- 
+        if (event->button() == Qt::LeftButton && m_currentROIMode == ROISelectionMode::Circle && 
+            m_multiCircleState >= MultiCircleState::SecondCircle && !m_selectionInProgress) {
+            
+            // 检查是否点击在第一个圆心附近
+            if (m_circleRadius > 0) {
+                int dx1 = labelPos.x() - m_circleCenter.x();
+                int dy1 = labelPos.y() - m_circleCenter.y();
+                if (dx1*dx1 + dy1*dy1 <= circleCenterHandleRadius * circleCenterHandleRadius) {
+                    m_isMovingROI = true;
+                    m_movingCircleIndex = 0;
+                    m_moveStartPos = labelPos;
+                    setCursor(Qt::ClosedHandCursor);
+                    qDebug() << "开始移动第一个圆";
+                    return; // 开始移动，不进行后续选择操作
+                }
+            }
+            
+            // 检查是否点击在第二个圆心附近
+            if (m_secondCircleRadius > 0) {
+                int dx2 = labelPos.x() - m_secondCircleCenter.x();
+                int dy2 = labelPos.y() - m_secondCircleCenter.y();
+                if (dx2*dx2 + dy2*dy2 <= circleCenterHandleRadius * circleCenterHandleRadius) {
+                    m_isMovingROI = true;
+                    m_movingCircleIndex = 1;
+                    m_moveStartPos = labelPos;
+                    setCursor(Qt::ClosedHandCursor);
+                    qDebug() << "开始移动第二个圆";
+                    return; // 开始移动，不进行后续选择操作
+                }
+            }
+        }
+        // --- 移动检测结束 ---
         
-        // 后续处理逻辑
+        // 后续处理逻辑 (选择ROI或显示像素信息)
         if (m_currentROIMode == ROISelectionMode::None) {
             // 常规模式 - 显示像素信息
             if (event->button() == Qt::LeftButton) {
@@ -1352,6 +1389,81 @@ void ProcessingWidget::mouseMoveEvent(QMouseEvent *event)
             return;
         }
         
+        // --- 新增：处理ROI移动 --- 
+        if (m_isMovingROI) {
+            // 计算鼠标移动的偏移量
+            QPoint offset = labelPos - m_moveStartPos;
+            
+            // 获取实际图像区域，限制移动范围
+            QRect actualImageRect = getScaledImageRect();
+
+            if (m_movingCircleIndex == 0) { // 移动第一个圆
+                QPoint newCenter = m_circleCenter + offset;
+                // 限制圆心在图像显示区域内 (UI坐标)
+                newCenter.setX(qBound(actualImageRect.left() + m_circleRadius, newCenter.x(), actualImageRect.right() - m_circleRadius));
+                newCenter.setY(qBound(actualImageRect.top() + m_circleRadius, newCenter.y(), actualImageRect.bottom() - m_circleRadius));
+                
+                // 更新UI和图像坐标
+                m_circleCenter = newCenter;
+                m_imageCircleCenter = mapToImageCoordinates(m_circleCenter);
+                qDebug() << "移动第一个圆到(UI):" << m_circleCenter << "(图像):" << m_imageCircleCenter;
+            } else if (m_movingCircleIndex == 1) { // 移动第二个圆
+                QPoint newCenter = m_secondCircleCenter + offset;
+                // 限制圆心在图像显示区域内 (UI坐标)
+                newCenter.setX(qBound(actualImageRect.left() + m_secondCircleRadius, newCenter.x(), actualImageRect.right() - m_secondCircleRadius));
+                newCenter.setY(qBound(actualImageRect.top() + m_secondCircleRadius, newCenter.y(), actualImageRect.bottom() - m_secondCircleRadius));
+                
+                // 更新UI和图像坐标
+                m_secondCircleCenter = newCenter;
+                m_imageSecondCircleCenter = mapToImageCoordinates(m_secondCircleCenter);
+                 qDebug() << "移动第二个圆到(UI):" << m_secondCircleCenter << "(图像):" << m_imageSecondCircleCenter;
+            }
+            
+            // 更新起始点以便计算下一次偏移
+            m_moveStartPos = labelPos;
+            
+            // 更新显示
+            updateROIDisplay();
+            return; // 移动操作优先，不执行后续逻辑
+        }
+        // --- 移动处理结束 ---
+        
+        // --- 修改：添加悬停光标 --- 
+        bool hoveringOnHandle = false;
+        if (m_currentROIMode == ROISelectionMode::Circle && 
+            m_multiCircleState >= MultiCircleState::SecondCircle && 
+            !m_selectionInProgress && !m_isMovingROI) {
+            // 检查是否悬停在第一个圆心
+            if (m_circleRadius > 0) {
+                int dx1 = labelPos.x() - m_circleCenter.x();
+                int dy1 = labelPos.y() - m_circleCenter.y();
+                if (dx1*dx1 + dy1*dy1 <= circleCenterHandleRadius * circleCenterHandleRadius) {
+                    hoveringOnHandle = true;
+                }
+            }
+            // 检查是否悬停在第二个圆心
+            if (!hoveringOnHandle && m_secondCircleRadius > 0) {
+                int dx2 = labelPos.x() - m_secondCircleCenter.x();
+                int dy2 = labelPos.y() - m_secondCircleCenter.y();
+                if (dx2*dx2 + dy2*dy2 <= circleCenterHandleRadius * circleCenterHandleRadius) {
+                    hoveringOnHandle = true;
+                }
+            }
+        }
+        
+        if (hoveringOnHandle) {
+            setCursor(Qt::OpenHandCursor);
+        } else if (!m_isMovingROI && !m_selectionInProgress) { // 只有在非移动和非选择状态才恢复默认光标
+             // 根据当前ROI模式设置默认光标，或者就是ArrowCursor
+            switch (m_currentROIMode) {
+                case ROISelectionMode::Rectangle: setCursor(Qt::CrossCursor); break;
+                case ROISelectionMode::Circle:    setCursor(Qt::CrossCursor); break;
+                case ROISelectionMode::Arbitrary: setCursor(Qt::PointingHandCursor); break;
+                default:                          setCursor(Qt::ArrowCursor); break;
+            } 
+        }
+        // --- 悬停光标结束 ---
+
         // 非ROI选择模式 - 显示像素信息
         if (m_currentROIMode == ROISelectionMode::None || !m_selectionInProgress) {
             // 检查鼠标是否在实际图像区域内
@@ -1486,6 +1598,24 @@ void ProcessingWidget::mouseMoveEvent(QMouseEvent *event)
 void ProcessingWidget::mouseReleaseEvent(QMouseEvent *event)
 {
     try {
+        // --- 新增：结束ROI移动 --- 
+        if (m_isMovingROI) {
+            m_isMovingROI = false;
+            m_movingCircleIndex = -1;
+            setCursor(Qt::OpenHandCursor); // Or ArrowCursor, depending on preference
+            qDebug() << "结束移动ROI";
+            
+            // 移动结束后，重新计算环形ROI的状态（如果需要）
+            // 这里可以触发一个信号通知MainWindow更新统计信息，或者直接在这里计算
+            // 例如：calculateRingROI(); // 重新计算，但可能不需要
+            // emit ringROISelected(m_imageCircleCenter, m_imageCircleRadius, 
+            //                      m_imageSecondCircleCenter, m_imageSecondCircleRadius); // 通知位置已更新
+                             
+            updateROIDisplay(); // 确保最终位置被绘制
+            return; // 结束移动，不执行后续的选择完成逻辑
+        }
+        // --- 移动结束处理 ---
+        
         if (event->button() == Qt::LeftButton && m_selectionInProgress) {
             switch (m_currentROIMode) {
                 case ROISelectionMode::Rectangle:
@@ -2000,26 +2130,15 @@ void ProcessingWidget::updateROIDisplay()
         // 确保覆盖层大小与imageLabel一致
         m_roiOverlay->setGeometry(0, 0, imageLabel->width(), imageLabel->height());
         
-        // 更新ROI数据 - 在选择第二个圆时，传递正确的信息
-        if (m_multiCircleState == MultiCircleState::FirstCircle) {
-            // 如果正在选择第二个圆，则传递第一个圆和正在选择的第二个圆的信息
-            m_roiOverlay->setROIData(m_rectangleROI, m_circleCenter, m_circleRadius,
-                                   m_arbitraryPoints, m_selectionInProgress,
-                                   m_imageRectangleROI, 
-                                   m_currentImage.width(), m_currentImage.height(),
-                                   actualImageRect, m_imageCircleRadius,
-                                   m_secondCircleCenter, m_secondCircleRadius,
-                                   m_imageSecondCircleRadius, m_multiCircleState);
-        } else {
-            // 否则，传递当前的ROI信息
-            m_roiOverlay->setROIData(m_rectangleROI, m_circleCenter, m_circleRadius,
-                                   m_arbitraryPoints, m_selectionInProgress,
-                                   m_imageRectangleROI, 
-                                   m_currentImage.width(), m_currentImage.height(),
-                                   actualImageRect, m_imageCircleRadius,
-                                   m_secondCircleCenter, m_secondCircleRadius,
-                                   m_imageSecondCircleRadius, m_multiCircleState);
-        }
+        // 更新ROI数据 - 始终传递所有当前的ROI信息，包括第一个和第二个圆
+        m_roiOverlay->setROIData(m_rectangleROI, m_circleCenter, m_circleRadius,
+                               m_arbitraryPoints, m_selectionInProgress,
+                               m_imageRectangleROI, 
+                               m_currentImage.width(), m_currentImage.height(),
+                               actualImageRect, m_imageCircleRadius,
+                               m_secondCircleCenter, m_secondCircleRadius,
+                               m_imageSecondCircleRadius, m_multiCircleState);
+        
         m_roiOverlay->update();
     }
 }

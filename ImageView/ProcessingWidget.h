@@ -215,6 +215,12 @@ private:
     
     // 控制鼠标响应的全局变量
     bool m_isROIMode = false; // false表示显示坐标模式，true表示ROI选择模式
+    
+    // 新增：用于移动ROI的状态变量
+    bool m_isMovingROI = false;      // 标记是否正在移动ROI
+    int m_movingCircleIndex = -1; // 标记正在移动的圆 (0 for first, 1 for second)
+    QPoint m_moveStartPos;           // 移动开始时的鼠标位置 (相对于 imageLabel)
+    const int circleCenterHandleRadius = 8; // 圆心可点击区域的半径
 
     // 中间
     QTabWidget    *tabWidget;
